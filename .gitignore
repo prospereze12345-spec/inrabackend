@@ -1,0 +1,23 @@
+# Virtual environments
+inra/
+venv/
+.venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Environment variables
+.env
+
+# Redis
+dump.rdb
+
+# Django
+media/
+staticfiles/
+db.sqlite3
+
+# VS Code
+.vscode/
