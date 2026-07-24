@@ -5,6 +5,12 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 from dotenv import load_dotenv
 
+SITE_URL = "http://127.0.0.1:8000"
+STATIC_URL = "static/"
+
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
 load_dotenv()
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=True, cast=bool)
@@ -158,8 +164,8 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:8000",
-    "https://vsnet-combinations-epic-converter.trycloudflare.com",
-
+    "http://localhost:8123",   
+    "http://127.0.0.1:8123",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -178,8 +184,10 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+
 
 LOGGING = {
     "version": 1,
