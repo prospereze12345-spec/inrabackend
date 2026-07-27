@@ -30,13 +30,11 @@ jsonschema-specifications==2025.9.1
 kombu==5.6.2
 lazy-loader==0.5
 llvmlite==0.47.0
-moviepy==2.2.1
 networkx==3.6.1
 numba==0.65.1
 numpy==2.4.6
 onnxruntime==1.27.0
 packaging==26.2
-pillow==11.3.0
 platformdirs==4.10.0
 pooch==1.9.0
 proglog==0.1.12
