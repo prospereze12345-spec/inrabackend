@@ -220,32 +220,37 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY =  os.getenv("GEMINI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
 
+
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+UPSTASH_REDIS_URL = config("UPSTASH_REDIS_URL")  # rediss://default:<password>@<endpoint>.upstash.io:6379
+ 
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": REDIS_URL,
+        "LOCATION": UPSTASH_REDIS_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
             "IGNORE_EXCEPTIONS": True,
             "SOCKET_CONNECT_TIMEOUT": 5,
             "SOCKET_TIMEOUT": 5,
+            # Upstash requires TLS; django-redis picks this up from the
+            # rediss:// scheme automatically, no extra SSL kwargs needed.
         },
     }
 }
-
+ 
 DJANGO_REDIS_IGNORE_EXCEPTIONS = True
 DJANGO_REDIS_LOG_IGNORED_EXCEPTIONS = True
+ 
 
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/0"
+QSTASH_TOKEN = config("QSTASH_TOKEN")
+QSTASH_CURRENT_SIGNING_KEY = config("QSTASH_CURRENT_SIGNING_KEY")
+QSTASH_NEXT_SIGNING_KEY = config("QSTASH_NEXT_SIGNING_KEY")
+ 
+QSTASH_WEBHOOK_URL = f"{SITE_URL}/api/ai-studio/qstash/webhook/"
+ 
 
-CELERY_BROKER_TRANSPORT_OPTIONS = {
-    "socket_timeout": 5,
-    "socket_connect_timeout": 5,
-    "retry_on_timeout": True,
-}
-CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
-
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
-
+QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/ai-studio/qstash/failure/"

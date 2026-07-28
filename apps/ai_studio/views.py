@@ -6,7 +6,7 @@ import hashlib
 
 
 from .models import AIJob
-from .tasks import process_ai_job
+from .services.qstash_client import enqueue_ai_job
 
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
@@ -23,7 +23,7 @@ class CreateAIJobView(APIView):
             return Response({"error": "Image required"}, status=400)
 
         job = AIJob.objects.create(image=image, user=request.user)
-        process_ai_job.delay(str(job.id))
+        enqueue_ai_job(str(job.id))
 
         return Response({"job_id": str(job.id), "status": job.status}, status=202)
 
