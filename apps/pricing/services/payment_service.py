@@ -193,7 +193,7 @@ class PaymentService:
             "payment_options": CURRENCY_PAYMENT_OPTIONS.get(
                 transaction.currency, DEFAULT_PAYMENT_OPTIONS
             ),
-            "redirect_url": getattr(settings, "FLUTTERWAVE_REDIRECT_URL", "http://localhost:3000/payment/verify"),
+            "redirect_url": getattr(settings, "FLUTTERWAVE_REDIRECT_URL", "https://inrastudio.vercel.app/payment/verify"),
             
             "customer": {
                 "email": user.email,
