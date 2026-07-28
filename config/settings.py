@@ -5,7 +5,10 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 from dotenv import load_dotenv
 
-SITE_URL = "http://127.0.0.1:8000"
+SITE_URL = config(
+    "SITE_URL",
+    default="https://inrabackend.onrender.com"
+)
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
@@ -199,7 +202,7 @@ LOGGING = {
     "handlers": {
         "console": {"class": "logging.StreamHandler"},
     },
-    "root": {"handlers": ["console"], "level": "DEBUG"},
+    "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
         "apps.accounts": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
     },
