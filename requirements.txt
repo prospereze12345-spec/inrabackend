@@ -31,7 +31,6 @@ jsonschema-specifications==2025.9.1
 kombu==5.6.2
 lazy-loader==0.5
 llvmlite==0.47.0
-moviepy==2.2.1
 networkx==3.6.1
 numba==0.65.1
 numpy==2.4.6
