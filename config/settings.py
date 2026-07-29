@@ -250,7 +250,7 @@ QSTASH_TOKEN = config("QSTASH_TOKEN")
 QSTASH_CURRENT_SIGNING_KEY = config("QSTASH_CURRENT_SIGNING_KEY")
 QSTASH_NEXT_SIGNING_KEY = config("QSTASH_NEXT_SIGNING_KEY")
  
-QSTASH_WEBHOOK_URL = f"{SITE_URL}/api/ai-studio/qstash/webhook/"
+QSTASH_WEBHOOK_URL = f"{SITE_URL}/api/campaign/qstash/webhook/"
  
 
-QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/ai-studio/qstash/failure/"
+QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/campaign/qstash/failure/"
