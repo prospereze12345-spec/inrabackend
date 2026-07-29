@@ -1,87 +1,86 @@
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 from django.conf import settings
+from django.core.files.storage import default_storage
 import shutil
 from urllib.parse import urlparse
 
-from .renderer import RemotionRenderer, SOCIAL_FORMATS, generate_video  # already there
-from .renderer import RemotionRenderer, SOCIAL_FORMATS, generate_video  # noqa: F401
+from .renderer import RemotionRenderer, SOCIAL_FORMATS, generate_video
 
 logger = logging.getLogger(__name__)
 
 
-
 def _media_relative_path_from_url(url: str) -> str | None:
     """
-    Turns 'http://host/media/uploads/xxx.png' into 'uploads/xxx.png'.
-    Returns None for blob:/data:/external URLs we can't resolve to a
-    local file (blob: is a browser-only in-memory URL and will never
-    be reachable here; data: and unrelated external URLs are skipped
-    too, since we only know how to copy from our own MEDIA_ROOT).
+    Turns a Cloudinary/media URL into the storage-relative key
+    (e.g. 'uploads/xxx.png'), so we can hand it to default_storage.open().
+    Returns None for blob:/data: URLs, which never resolve to a real file.
     """
     if not url or url.startswith("blob:") or url.startswith("data:"):
         return None
-    media_url_path = urlparse(settings.MEDIA_URL).path or "/media/"
+
     parsed_path = urlparse(url).path
+    # Cloudinary URLs look like /<cloud_name>/image/upload/v123/uploads/xxx.png
+    # We only care about everything after the last "/upload/vNNN/" segment.
+    if "/upload/" in parsed_path:
+        after_upload = parsed_path.split("/upload/", 1)[1]
+        # strip a leading version segment like "v1234567890/"
+        parts = after_upload.split("/", 1)
+        if parts and parts[0].startswith("v") and parts[0][1:].isdigit():
+            return parts[1] if len(parts) > 1 else None
+        return after_upload
+
+    # fallback: local MEDIA_URL-style path (covers local dev without Cloudinary)
+    media_url_path = urlparse(settings.MEDIA_URL).path or "/media/"
     if not parsed_path.startswith(media_url_path):
         return None
     return parsed_path[len(media_url_path):].lstrip("/")
 
 
 def _copy_asset_to_remotion(media_relative_path: str, subfolder: str) -> str:
-    src_abs = Path(settings.MEDIA_ROOT) / media_relative_path
-    if not src_abs.is_file():
-        logger.warning("Asset not found on disk: %s", src_abs)
+    """
+    Pulls the file's bytes from whichever storage backend is active
+    (local disk in dev, Cloudinary in prod) and writes them into
+    remotion/public/<subfolder>/ so Remotion can read them as a
+    local asset during rendering. Remotion has no concept of remote
+    storage, so this copy step is required regardless of backend.
+    """
+    try:
+        with default_storage.open(media_relative_path, "rb") as src:
+            data = src.read()
+    except FileNotFoundError:
+        logger.warning("Asset not found in storage: %s", media_relative_path)
+        return ""
+    except Exception as e:
+        logger.error("Failed to read %s from storage: %s", media_relative_path, e)
         return ""
 
     remotion_root = RemotionRenderer._find_project_root()
     dest_dir = remotion_root / "remotion" / "public" / subfolder
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / src_abs.name
+    dest = dest_dir / Path(media_relative_path).name
 
     try:
-        shutil.copy2(src_abs, dest)
+        dest.write_bytes(data)
     except OSError as e:
-        logger.error("Failed to copy %s -> %s: %s", src_abs, dest, e)
+        logger.error("Failed to write %s: %s", dest, e)
         return ""
 
     if not dest.is_file():
         logger.error("Copy silently failed, dest missing: %s", dest)
         return ""
 
-    return f"{subfolder}/{src_abs.name}"
+    return f"{subfolder}/{dest.name}"
+
 
 def build_promo_props(job, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    """
-    Single source of truth for the props passed into the PromoVideo
-    composition.
-
-    Both the background Celery pipeline (stage 6) and the on-demand
-    /export endpoint call this. Previously they built props two
-    different ways — stage 6 pulled from job.flyer_props / job.captions,
-    while ExportPackageView pulled from separate scalar columns
-    (job.headline, job.primary_color, job.png, ...) that the pipeline
-    never actually populates. That's why exports could come out with
-    blank/stale text and colors, or blow up outright on the missing
-    job.png attribute. Now there is exactly one place this data comes
-    from.
-
-    `overrides`, if provided, represents live in-browser edits that
-    haven't been saved to the job yet (e.g. a user tweaking text/colors
-    in the editor and downloading before hitting save). When present,
-    it's merged on top of the job's persisted flyer_props/captions so
-    the render reflects what the user currently sees on screen rather
-    than the last-saved state.
-    """
     fp = dict(job.flyer_props or {})
     captions_block = dict(job.captions or {})
 
     if overrides:
-        # overrides may itself carry a "colors" sub-dict and/or a
-        # "captions"/"flyer" sub-block — merge shallowly so unspecified
-        # keys still fall back to the persisted job state.
         override_colors = overrides.get("colors")
         override_captions = overrides.get("captions") or overrides.get("flyer")
 
@@ -97,33 +96,28 @@ def build_promo_props(job, overrides: Dict[str, Any] | None = None) -> Dict[str,
             }
 
     colors = fp.get("colors", {})
-
     price_text = fp.get("price") or captions_block.get("flyer", {}).get("price_text", "")
 
-
     nobg_uri = ""
-    override_image_url = fp.get("productImage")  
+    override_image_url = fp.get("productImage")
 
     if override_image_url:
-       rel = _media_relative_path_from_url(override_image_url)
-       if rel:
-          subfolder = Path(rel).parent.as_posix() or "uploads"   
-          nobg_uri = _copy_asset_to_remotion(rel, subfolder)
-       else:
-       
-        nobg_uri = override_image_url
+        rel = _media_relative_path_from_url(override_image_url)
+        if rel:
+            subfolder = Path(rel).parent.as_posix() or "uploads"
+            nobg_uri = _copy_asset_to_remotion(rel, subfolder)
+        else:
+            nobg_uri = override_image_url
 
     if not nobg_uri and job.image_nobg:
-       nobg_abs = Path(settings.MEDIA_ROOT) / str(job.image_nobg)
-       if nobg_abs.is_file():
-         nobg_uri = _copy_asset_to_remotion(str(job.image_nobg), "nobg")
-       else:
-        logger.warning(
-            "image_nobg is set on job %s but file is missing on disk: %s",
-            job.id, nobg_abs,
-        )
+        # job.image_nobg.name is the storage-relative key regardless of backend
+        nobg_uri = _copy_asset_to_remotion(job.image_nobg.name, "nobg")
+        if not nobg_uri:
+            logger.warning(
+                "image_nobg is set on job %s but could not be fetched from storage: %s",
+                job.id, job.image_nobg.name,
+            )
 
-        
     return {
         "headline":     fp.get("headline",  ""),
         "subtext":      fp.get("subtext",   ""),
@@ -144,7 +138,6 @@ def build_promo_props(job, overrides: Dict[str, Any] | None = None) -> Dict[str,
 
 
 def resolve_video_format(job) -> str:
-    """Format must match one of RemotionRenderer's SOCIAL_FORMATS keys."""
     format_name = getattr(job, "video_format", None) or "ig"
     if format_name not in SOCIAL_FORMATS:
         logger.warning(
@@ -157,34 +150,38 @@ def resolve_video_format(job) -> str:
 
 def ensure_job_video(job, verbose: bool = False) -> Path:
     """
-    Render (or reuse) the promo video for a job.
-
-    Safe to call from both the Celery pipeline and the export endpoint:
-    if job.video already points at a file that exists on disk, it's
-    returned as-is with no re-render. Otherwise it renders using
-    build_promo_props(), so the export button and the background job
-    are guaranteed to produce the same video.
+    Renders the video to a local temp path (Remotion's output has to land
+    somewhere on disk), then uploads the result into default_storage so
+    job.video points at Cloudinary like every other field.
     """
     if job.video:
-        existing = Path(settings.MEDIA_ROOT) / str(job.video)
-        if existing.is_file():
-            return existing
+        # existence check now goes through the storage backend, not MEDIA_ROOT
+        if default_storage.exists(job.video.name):
+            # we still need a local copy for anything downstream that opens
+            # job.video as a path (e.g. re-serving for export) — caller
+            # decides if it needs bytes; here we just confirm it's there.
+            return Path(job.video.name)
         logger.warning(
-            "job.video points at %s but the file is missing — re-rendering.",
-            existing,
+            "job.video points at %s but it's missing from storage — re-rendering.",
+            job.video.name,
         )
 
-    video_abs = Path(settings.MEDIA_ROOT) / "videos" / f"{job.id}.mp4"
     props = build_promo_props(job)
     format_name = resolve_video_format(job)
 
-    generate_video(
-        props=props,
-        output_path=str(video_abs),
-        format_name=format_name,
-        verbose=verbose,
-    )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        video_abs = Path(tmp_dir) / f"{job.id}.mp4"
 
-    job.video = f"videos/{job.id}.mp4"
-    job.save(update_fields=["video"])
-    return video_abs
+        generate_video(
+            props=props,
+            output_path=str(video_abs),
+            format_name=format_name,
+            verbose=verbose,
+        )
+
+        from django.core.files.base import ContentFile
+        with open(video_abs, "rb") as f:
+            job.video.save(f"{job.id}.mp4", ContentFile(f.read()), save=False)
+        job.save(update_fields=["video"])
+
+        return video_abs

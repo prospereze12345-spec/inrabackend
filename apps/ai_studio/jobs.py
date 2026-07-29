@@ -18,7 +18,8 @@ logic is unchanged from the original file — only the retry mechanics differ:
 """
 import os
 import logging
-
+import tempfile
+from django.core.files.storage import default_storage
 from django.conf import settings
 from django.core.files.base import ContentFile
 
@@ -122,14 +123,24 @@ def run_ai_job(job_id: str) -> None:
             raise RetryableJobError(exc) from exc
         raise NonRetryableJobError(exc) from exc
 
+    
+
     # ── stage 5: build flyer ─────────────────────────────────────────────────
     try:
         _set_stage(job, "building_flyer")
 
-        nobg_abs = os.path.join(settings.MEDIA_ROOT, str(job.image_nobg.name))
-        flyer_abs = os.path.join(settings.MEDIA_ROOT, "flyers", f"{job.id}.jpg")
+        with default_storage.open(job.image_nobg.name, "rb") as remote_file:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(remote_file.read())
+                nobg_abs = tmp.name
 
-        flyer_result = build_flyer(captions, nobg_abs, flyer_abs)
+        flyer_abs = os.path.join(settings.MEDIA_ROOT, "flyers", f"{job.id}.jpg")
+        os.makedirs(os.path.dirname(flyer_abs), exist_ok=True)
+
+        try:
+            flyer_result = build_flyer(captions, nobg_abs, flyer_abs)
+        finally:
+            os.remove(nobg_abs)
 
         job.flyer = f"flyers/{job.id}.jpg"
         job.flyer_props = flyer_result["props"]
