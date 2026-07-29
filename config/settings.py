@@ -57,6 +57,9 @@ STORAGES = {
     },
 }
 
+
+STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
+
 FLUTTERWAVE_PUBLIC_KEY = os.environ.get("FLUTTERWAVE_PUBLIC_KEY")
 FLUTTERWAVE_SECRET_KEY = os.environ.get("FLUTTERWAVE_SECRET_KEY")
 FLUTTERWAVE_ENCRYPTION_KEY = os.environ.get("FLUTTERWAVE_ENCRYPTION_KEY")
@@ -67,13 +70,7 @@ FLUTTERWAVE_REDIRECT_URL = os.environ.get(
     "https://inrastudio.vercel.app/payment/verify",
 )
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': 'redis://localhost:6379/1',
-        'TIMEOUT': 3600,
-    }
-}
+
 
 
 MIDDLEWARE = [
@@ -119,12 +116,6 @@ DATABASES = {
 # ── Redis — local Redis for testing ──────────────────────────────────────────
 REDIS_URL = config("REDIS_URL", default="redis://localhost:6379")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": REDIS_URL,
-    }
-}
 
 # ── Password Hashers — Argon2 ─────────────────────────────────────────────────
 PASSWORD_HASHERS = [
