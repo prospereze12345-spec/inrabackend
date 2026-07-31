@@ -74,12 +74,13 @@ def signup_service(email: str, full_name: str, country: str, password: str, ip: 
     logger.info("New user created: %s", email)
 
     try:
-        print("Calling send_welcome_email()...")
-        send_welcome_email(user)
-        print("✅ Welcome email sent successfully")
+     print("Calling send_welcome_email()...")
+     dashboard_url = f"{settings.FRONTEND_URL.rstrip('/')}/dashboard"
+     send_welcome_email(user, dashboard_url)
+     print("✅ Welcome email sent successfully")
     except Exception:
-        print("❌ Error sending welcome email:")
-        traceback.print_exc()
+     print("❌ Error sending welcome email:")
+    traceback.print_exc()
 
     print("Generating magic token...")
     token = generate_magic_token()
