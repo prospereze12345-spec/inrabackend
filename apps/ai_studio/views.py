@@ -230,7 +230,7 @@ from django.http import FileResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .renderer import SOCIAL_FORMATS, generate_video, normalize_promo_props
+from .services.renderer import SOCIAL_FORMATS, generate_video, normalize_promo_props
 
 
 @csrf_exempt
