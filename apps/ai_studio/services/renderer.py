@@ -17,23 +17,72 @@ class VideoFormat:
     width: int
     height: int
     fps: int
-    duration: int  # in frames
+    duration: int 
 
     @property
     def frame_range(self) -> str:
         return f"0-{self.duration - 1}"
 
 
-# Formats mirrored 1:1 from the frontend's SOCIAL_FORMATS (ids, ratios, durations).
-# Keep the "id" values in sync with app/editor's SOCIAL_FORMATS array.
 SOCIAL_FORMATS: Dict[str, VideoFormat] = {
-    "ig":     VideoFormat(1080, 1350, 30, 360),  # 4:5   – 12s
-    "square": VideoFormat(1080, 1080, 30, 360),  # 1:1   – 12s
-    "story":  VideoFormat(1080, 1920, 30, 450),  # 9:16  – 15s
-    "yt":     VideoFormat(1920, 1080, 30, 450),  # 16:9  – 15s
-    "tiktok": VideoFormat(1080, 1920, 30, 360),  # 9:16  – 12s
-    "banner": VideoFormat(1680,  720, 30, 300),  # 21:9  – 10s
+    "ig":     VideoFormat(1080, 1350, 30, 360),  
+    "square": VideoFormat(1080, 1080, 30, 360),  
+    "story":  VideoFormat(1080, 1920, 30, 450),  
+    "yt":     VideoFormat(1920, 1080, 30, 450),  
+    "tiktok": VideoFormat(1080, 1920, 30, 360),  
+    "banner": VideoFormat(1680,  720, 30, 300),  
 }
+
+
+DEFAULT_PROMO_PROPS: Dict[str, Any] = {
+    "headline": "",
+    "subtext": "",
+    "ctaText": "",
+    "price": "",
+    "brandName": "",
+    "website": "",
+    "productImage": "",
+    "colors": {"primary": "#0a0a0a", "secondary": "#ffffff", "accent": "#c9a84c"},
+    "logoImage": None,
+    "badge": None,
+}
+
+DEFAULT_BADGE_TRANSFORM: Dict[str, Any] = {"x": 84, "y": 16, "scale": 1}
+
+
+def normalize_promo_props(props: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Fill in defaults for a PromoVideoProps payload sent from the editor's
+    VideoPanel (the same `promoProps` object passed to <Player inputProps=...>
+    and to @remotion/web-renderer). Ensures the backend's render.mjs call
+    receives the identical shape PromoVideo.tsx's `defaultProps` expects.
+    """
+    props = props or {}
+    merged = {**DEFAULT_PROMO_PROPS, **props}
+    merged["colors"] = {
+        **DEFAULT_PROMO_PROPS["colors"],
+        **(props.get("colors") or {}),
+    }
+
+    badge = props.get("badge")
+    if badge and badge.get("visible", True):
+        merged["badge"] = {
+            "visible": True,
+            "text": badge.get("text", "50%"),
+            "subText": badge.get("subText", "OFF"),
+            "textColor": badge.get("textColor", "#111111"),
+            "bgColor": badge.get("bgColor", "#ffd23f"),
+            "transform": {
+                **DEFAULT_BADGE_TRANSFORM,
+                **(badge.get("transform") or {}),
+            },
+        }
+    else:
+        merged["badge"] = None
+
+    merged["logoImage"] = props.get("logoImage") or None
+
+    return merged
 
 
 class RemotionRenderer:
@@ -55,7 +104,7 @@ class RemotionRenderer:
       internally on first use, with zero configuration from us.
     """
 
-    DEFAULT_RENDER_TIMEOUT = 300  # seconds, total time allowed for the subprocess
+    DEFAULT_RENDER_TIMEOUT = 300 
 
     def __init__(
         self,
@@ -67,10 +116,6 @@ class RemotionRenderer:
         self.node_path = node_path or self._find_node()
         self.render_script = self._find_render_script(self.project_root)
         self.render_timeout = render_timeout
-
-    # ----------------------------------------------------------------------
-    # Discovery methods
-    # ----------------------------------------------------------------------
 
     @staticmethod
     def _find_node() -> Path:
@@ -129,9 +174,7 @@ class RemotionRenderer:
             "Expected remotion/render.mjs, or set REMOTION_RENDER_SCRIPT."
         )
 
-    # ----------------------------------------------------------------------
-    # Environment construction
-    # ----------------------------------------------------------------------
+    
 
     def _build_render_env(self) -> Dict[str, str]:
         """Build the environment dictionary for the subprocess (CI-friendly only)."""
@@ -139,9 +182,6 @@ class RemotionRenderer:
         env.setdefault("CI", "1")
         return env
 
-    # ----------------------------------------------------------------------
-    # Core rendering method
-    # ----------------------------------------------------------------------
 
     def render(
         self,
@@ -177,9 +217,6 @@ class RemotionRenderer:
         render_env = self._build_render_env()
         last_exception = None
 
-        # Props/config go in a temp JSON file rather than a CLI arg: avoids
-        # OS argv-length limits and shell-escaping issues with long headlines
-        # or base64 image data, and keeps the render script's CLI trivial.
         config_path = self._write_config_file(props, format_config, output_path)
 
         try:
@@ -246,9 +283,6 @@ class RemotionRenderer:
             )
             return Path(tmp.name)
 
-    # ----------------------------------------------------------------------
-    # Still-frame rendering (NEW — powers PNG/PDF flyer export)
-    # ----------------------------------------------------------------------
 
     def render_still(
         self,
@@ -339,7 +373,7 @@ class RemotionRenderer:
                     "width": width,
                     "height": height,
                     "fps": 30,
-                    "stillFrame": frame,   # ← presence of this key signals render.mjs to use renderStill()
+                    "stillFrame": frame,   
                     "outputPath": str(output_path),
                 },
                 tmp,
@@ -359,7 +393,7 @@ class RemotionRenderer:
             capture_output=True,
             text=True,
             timeout=self.render_timeout,
-            check=False,  # return code handled manually below
+            check=False,  
         )
 
         self._log_subprocess_output(result)
@@ -385,10 +419,6 @@ class RemotionRenderer:
         logger.info("Return code: %d", result.returncode)
 
 
-# ----------------------------------------------------------------------
-# Module-level convenience function (backwards compatible)
-# ----------------------------------------------------------------------
-
 def generate_video(
     props: dict,
     output_path: str,
@@ -412,21 +442,9 @@ def generate_video(
     return str(rendered_path)
 
 
-# ----------------------------------------------------------------------
-# NEW — flyer still-image export (PNG / PDF), reusing the same renderer
-# ----------------------------------------------------------------------
-
-# Default canvas for the still flyer export — matches the editor's default
-# portrait canvas ratio (4:5), independent of the video's SOCIAL_FORMATS
-# since the flyer export isn't tied to a social-platform aspect ratio.
 FLYER_STILL_WIDTH = 1080
 FLYER_STILL_HEIGHT = 1350
 
-# Frame index in the PromoVideo timeline where headline, price, subtext,
-# and CTA are all fully faded in and settled (see PromoVideo's Sequence/
-# interpolate offsets — CTA underline finishes animating at frame 195,
-# well before the outro sequence begins). Picked comfortably after that
-# so nothing is mid-animation in the captured still.
 FLYER_STILL_FRAME = 200
 
 
@@ -469,7 +487,6 @@ def generate_flyer_image(
         return str(rendered_path)
 
     if format == "pdf":
-        # Render the PNG to a temp file first, then convert.
         with tempfile.TemporaryDirectory() as tmp_dir:
             png_path = Path(tmp_dir) / "flyer_still.png"
             renderer.render_still(

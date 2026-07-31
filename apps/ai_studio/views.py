@@ -209,3 +209,88 @@ def upload_asset(request):
     file_url = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
 
     return JsonResponse({"url": file_url})
+
+
+
+
+
+
+
+
+
+
+
+import json
+import mimetypes
+import tempfile
+from pathlib import Path
+
+from django.conf import settings
+from django.http import FileResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+
+from .renderer import SOCIAL_FORMATS, generate_video, normalize_promo_props
+
+
+@csrf_exempt
+@require_POST
+def render_video_view(request):
+    """
+    POST /api/campaign/render-video/
+
+    Body (JSON):
+        {
+          "format": "ig" | "square" | "story" | "yt" | "tiktok" | "banner",
+          "props": { ...the exact `promoProps` object the editor's
+                     <Player> preview is already using... }
+        }
+
+    Renders the PromoVideo composition server-side, via the same
+    remotion/render.mjs + PromoVideo.tsx pipeline used everywhere else,
+    using exactly the props the live preview shows — so the downloaded
+    video matches the on-canvas preview pixel-for-pixel, animation
+    timing included. Streams the resulting MP4 back as a file download.
+    """
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid JSON body."}, status=400)
+
+    format_name = payload.get("format", "ig")
+    if format_name not in SOCIAL_FORMATS:
+        return JsonResponse(
+            {
+                "error": (
+                    f"Unknown format '{format_name}'. "
+                    f"Available: {list(SOCIAL_FORMATS.keys())}"
+                )
+            },
+            status=400,
+        )
+
+    props = normalize_promo_props(payload.get("props"))
+
+    output_dir = Path(settings.MEDIA_ROOT) / "renders"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    unique = next(tempfile._get_candidate_names())
+    output_path = output_dir / f"promo-{format_name}-{unique}.mp4"
+
+    try:
+        rendered_path = generate_video(
+            props=props,
+            output_path=str(output_path),
+            format_name=format_name,
+            verbose=False,
+        )
+    except Exception as exc:  # surfaces render.mjs / subprocess failures
+        return JsonResponse({"error": f"Render failed: {exc}"}, status=500)
+
+    response = FileResponse(
+        open(rendered_path, "rb"),
+        content_type=mimetypes.guess_type(str(rendered_path))[0] or "video/mp4",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="promo-{format_name}.mp4"'
+    )
+    return response
