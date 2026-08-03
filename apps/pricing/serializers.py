@@ -8,7 +8,6 @@ from .constants import CURRENCY_SYMBOLS, DEFAULT_CURRENCY, get_user_currency
 
 User = get_user_model()
 
-
 class PlanSerializer(serializers.ModelSerializer):
     price = serializers.SerializerMethodField()
     currency = serializers.SerializerMethodField()
@@ -47,18 +46,13 @@ class PlanSerializer(serializers.ModelSerializer):
         return DEFAULT_CURRENCY
 
     def _price(self, obj):
-        currency = self._currency()
-
-        mapping = {
-            "USD": obj.price_usd,
-            "NGN": obj.price_ngn,
-            "KES": obj.price_kes,
-            "GHS": obj.price_ghs,
-            "ZAR": obj.price_zar,
-            "EGP": obj.price_egp,
-        }
-
-        return mapping.get(currency, obj.price_usd)
+        """
+        Delegates to Plan.get_price(), the single source of truth for
+        which currencies the model actually supports. Never hardcode a
+        currency->field mapping here again -- if the model doesn't have
+        a column for a currency, get_price() already falls back to USD.
+        """
+        return obj.get_price(self._currency())
 
     def get_price(self, obj):
         return self._price(obj)
@@ -77,16 +71,18 @@ class PlanSerializer(serializers.ModelSerializer):
         """
         Original crossed-out price, per currency.
 
-        Pay As You Go:
-            $1.99 -> $2.99
-
-        Pro:
-            $4.99 -> $9.99
+        IMPORTANT: only currencies present in Plan.CURRENCY_FIELDS are
+        actually billed in that currency -- everything else silently
+        falls back to USD pricing via get_price(). To avoid showing an
+        "old price" in a currency the real price isn't shown in, we key
+        off the same set of supported currencies as the model.
         """
         if obj.plan_type == Plan.FREE:
             return None
 
         currency = self._currency()
+        if currency not in Plan.CURRENCY_FIELDS:
+            currency = DEFAULT_CURRENCY
 
         if obj.plan_type == Plan.PAYG:
             original = {
@@ -94,8 +90,6 @@ class PlanSerializer(serializers.ModelSerializer):
                 "NGN": Decimal("2500"),
                 "KES": Decimal("390"),
                 "GHS": Decimal("32"),
-                "ZAR": Decimal("55"),
-                "EGP": Decimal("95"),
             }
         else:
             original = {
@@ -103,8 +97,6 @@ class PlanSerializer(serializers.ModelSerializer):
                 "NGN": Decimal("10000"),
                 "KES": Decimal("780"),
                 "GHS": Decimal("65"),
-                "ZAR": Decimal("180"),
-                "EGP": Decimal("310"),
             }
 
         symbol = CURRENCY_SYMBOLS.get(currency, CURRENCY_SYMBOLS[DEFAULT_CURRENCY])
