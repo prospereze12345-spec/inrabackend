@@ -82,9 +82,7 @@ class PricingViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-    # ------------------------------------------------------------------
-    # AUTHENTICATED
-    # ------------------------------------------------------------------
+   
 
     @action(
         detail=False,
@@ -92,16 +90,25 @@ class PricingViewSet(viewsets.ViewSet):
         permission_classes=[IsAuthenticated],
     )
     def dashboard(self, request):
+        try:
+            free_plan = Plan.objects.get(plan_type=Plan.FREE)
+        except Plan.DoesNotExist:
+            logger.error(
+                "Dashboard requested but no '%s' Plan exists in DB. "
+                "Run `python manage.py seed_plans`.",
+                Plan.FREE,
+            )
+            return Response(
+                {"error": "Pricing plans are not configured yet. Please try again shortly."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         user_plan, _ = UserPlan.objects.get_or_create(
             user=request.user,
-            defaults={
-                "plan": Plan.objects.get(plan_type="free"),
-                "is_active": True,
-            },
+            defaults={"plan": free_plan, "is_active": True},
         )
 
         serializer = UserPlanSerializer(user_plan, context={"request": request})
-
         return Response(serializer.data)
 
     @action(
@@ -262,42 +269,36 @@ class PricingViewSet(viewsets.ViewSet):
             }
         )
 
-    @action(
-        detail=False,
-        methods=["post"],
-        permission_classes=[IsAuthenticated],
-    )
-    def track_generation(self, request):
-        campaign_id = request.data.get("campaign_id")
-
-        if not campaign_id:
-            return Response(
-                {"error": "campaign_id is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user_plan = UserPlan.objects.get(user=request.user)
-
-        with transaction.atomic():
-            user_plan.campaigns_used += 1
-            user_plan.campaigns_generated += 1
-            user_plan.daily_generation_count += 1
-            user_plan.last_generation_date = timezone.now().date()
-
-            user_plan.save()
-
-            UsageLog.objects.create(
-                user=request.user,
-                campaign_id=campaign_id,
-                action="generated",
-                metadata={
-                    "plan": user_plan.plan.plan_type,
-                },
-            )
-
+        
+@action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
+def track_generation(self, request):
+    campaign_id = request.data.get("campaign_id")
+    if not campaign_id:
         return Response(
-            {
-                "success": True,
-                "campaigns_used": user_plan.campaigns_used,
-            }
+            {"error": "campaign_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
         )
+
+    try:
+        user_plan = UserPlan.objects.get(user=request.user)
+    except UserPlan.DoesNotExist:
+        return Response(
+            {"error": "No active plan found. Visit the dashboard first."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    with transaction.atomic():
+        user_plan.campaigns_used += 1
+        user_plan.campaigns_generated += 1
+        user_plan.daily_generation_count += 1
+        user_plan.last_generation_date = timezone.now().date()
+        user_plan.save()
+
+        UsageLog.objects.create(
+            user=request.user,
+            campaign_id=campaign_id,
+            action="generated",
+            metadata={"plan": user_plan.plan.plan_type},
+        )
+
+    return Response({"success": True, "campaigns_used": user_plan.campaigns_used})

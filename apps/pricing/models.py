@@ -25,7 +25,6 @@ class Plan(models.Model):
         "NGN": "price_ngn",
         "KES": "price_kes",
         "GHS": "price_ghs",
-        "ZAR": "price_zar",
     }
 
     CURRENCY_SYMBOLS = {
@@ -33,7 +32,6 @@ class Plan(models.Model):
         "NGN": "₦",
         "KES": "KSh",
         "GHS": "GH₵",
-        "ZAR": "R",
     }
 
     name = models.CharField(max_length=50)
@@ -49,8 +47,7 @@ class Plan(models.Model):
     price_ngn = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     price_kes = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     price_ghs = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    price_zar = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    price_egp = models.DecimalField(max_digits=10, decimal_places=2, default=0)  
+    
 
 
     campaigns_per_month = models.PositiveIntegerField(default=0)
