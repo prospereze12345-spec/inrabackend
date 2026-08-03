@@ -7,7 +7,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         defaults = [
-            dict(plan_type=Plan.FREE, name="Free Trial", campaigns_per_month=3, has_watermark=True),
+            dict(plan_type=Plan.FREE, name="Free Trial", campaigns_per_month=1, has_watermark=True),
             dict(plan_type=Plan.PAYG, name="Pay-as-you-go", has_watermark=False),
             dict(plan_type=Plan.PRO, name="Pro Plan", has_watermark=False,
                  priority_queue=True, premium_templates=True, daily_limit=10),
