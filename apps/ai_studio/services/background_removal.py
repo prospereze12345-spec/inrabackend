@@ -1,11 +1,13 @@
-from PIL import Image
-import io
+from rembg import new_session, remove
+
+
+_session = new_session("u2net")
+
 
 def remove_background(image_file):
-    from rembg import remove  
     input_bytes = image_file.read()
-    return remove(input_bytes)
+    return remove(input_bytes, session=_session)
+
 
 def remove_background_from_bytes(image_bytes: bytes) -> bytes:
-    from rembg import remove
-    return remove(image_bytes)
+    return remove(image_bytes, session=_session)
