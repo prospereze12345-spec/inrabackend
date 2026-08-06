@@ -208,7 +208,7 @@ ANYMAIL = {
 }
 
 
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="onboarding@resend.dev")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@eduprompt.com.ng")
 
 LOGGING = {
     "version": 1,
