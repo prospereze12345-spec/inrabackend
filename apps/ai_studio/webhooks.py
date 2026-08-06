@@ -2,7 +2,7 @@
 QStash calls this endpoint over HTTPS instead of a Celery worker pulling
 from a broker. Add the route in urls.py (see urls_snippet.py) and make sure
 QSTASH_WEBHOOK_URL in settings.py points at this exact, publicly reachable
-path (e.g. https://inrabackend.onrender.com/api/ai-studio/qstash/webhook/).
+path (e.g. https://inrabackend-docker.onrender.com/api/ai-studio/qstash/webhook/).
 """
 import json
 import logging

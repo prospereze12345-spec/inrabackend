@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 SITE_URL = config(
     "SITE_URL",
-    default="https://inrabackend.onrender.com"
+    default="https://inrabackend-docker.onrender.com"
 )
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
@@ -84,7 +84,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
-BACKEND_URL = "https://inrabackend.onrender.com"
+BACKEND_URL = "https://inrabackend-docker.onrender.com"
 
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
@@ -116,7 +116,6 @@ DATABASES = {
 
 
 
-# ── Password Hashers — Argon2 ─────────────────────────────────────────────────
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
@@ -129,14 +128,12 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
 AUTH_USER_MODEL = "accounts.User"
 
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
 ]
 
-# ── SimpleJWT ─────────────────────────────────────────────────────────────────
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=config("JWT_ACCESS_LIFETIME_MINUTES", default=15, cast=int)),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=config("JWT_REFRESH_LIFETIME_DAYS", default=7, cast=int)),
@@ -153,7 +150,6 @@ SIMPLE_JWT = {
     "JTI_CLAIM": "jti",
 }
 
-# ── DRF ───────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -163,7 +159,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
-        "rest_framework.renderers.BrowsableAPIRenderer",  # helpful during testing
+        "rest_framework.renderers.BrowsableAPIRenderer",  
     ],
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
@@ -173,10 +169,10 @@ REST_FRAMEWORK = {
 
 CORS_ALLOWED_ORIGINS = [
     "https://inrastudio.vercel.app",
-    "https://inrabackend.onrender.com",
+    "https://inrabackend-docker.onrender.com",
     "http://localhost:8123",
     "http://127.0.0.1:8123",
-    "https://inrabackend.onrender.com",
+    "https://inrabackend-docker.onrender.com",
 ]
 
 
@@ -235,7 +231,7 @@ GEMINI_API_KEY =  os.getenv("GEMINI_API_KEY")
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-UPSTASH_REDIS_URL = config("UPSTASH_REDIS_URL")  # rediss://default:<password>@<endpoint>.upstash.io:6379
+UPSTASH_REDIS_URL = config("UPSTASH_REDIS_URL")  
  
 CACHES = {
     "default": {
@@ -246,8 +242,7 @@ CACHES = {
             "IGNORE_EXCEPTIONS": True,
             "SOCKET_CONNECT_TIMEOUT": 5,
             "SOCKET_TIMEOUT": 5,
-            # Upstash requires TLS; django-redis picks this up from the
-            # rediss:// scheme automatically, no extra SSL kwargs needed.
+           
         },
     }
 }
