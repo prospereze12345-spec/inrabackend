@@ -1,7 +1,6 @@
 from rembg import new_session, remove
 
-
-_session = new_session("u2net")
+_session = new_session("u2netp")  # was "u2net"
 
 
 def remove_background(image_file):
