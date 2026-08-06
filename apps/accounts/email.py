@@ -30,6 +30,10 @@ def send_welcome_email(user, dashboard_url: str | None = None) -> None:
     msg.attach_alternative(html, "text/html")
     msg.send()
 
+from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
+from django.conf import settings
+
 
 def send_magic_link_email(user, magic_link: str) -> None:
     html = render_to_string(
@@ -47,5 +51,14 @@ def send_magic_link_email(user, magic_link: str) -> None:
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[user.email],
     )
+
     msg.attach_alternative(html, "text/html")
-    msg.send()
+
+    sent = msg.send(fail_silently=False)
+
+    print(f"Django email backend returned: {sent}")
+
+    if sent != 1:
+        raise RuntimeError(
+            f"Expected 1 email to be sent, but Django returned {sent}."
+        )
