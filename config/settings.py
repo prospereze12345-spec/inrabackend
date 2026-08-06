@@ -264,3 +264,6 @@ QSTASH_WEBHOOK_URL = f"{SITE_URL}/api/campaign/qstash/webhook/"
  
 
 QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/campaign/qstash/failure/"
+REMOVE_BG_API_KEY = os.environ.get("REMOVE_BG_API_KEY")
+PIXIAN_API_ID = os.environ.get("PIXIAN_API_ID")
+PIXIAN_API_SECRET = os.environ.get("PIXIAN_API_SECRET")
