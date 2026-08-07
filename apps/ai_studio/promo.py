@@ -6,7 +6,7 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 
 from services.renderer import SOCIAL_FORMATS, normalize_promo_props
-from .renderer_dispatch import trigger_github_render
+from .services.renderer_dispatch import trigger_github_render
 
 logger = logging.getLogger(__name__)
 

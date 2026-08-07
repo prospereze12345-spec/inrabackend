@@ -30,7 +30,7 @@ from .services.product_parser import build_product_context
 from .services.captions import generate_captions, CaptionGenerationError
 from .services.flyer_generator import build_flyer
 from .services.video_generator import ensure_job_video
-
+from .services.video_generator import dispatch_job_video
 logger = logging.getLogger(__name__)
 
 
@@ -149,15 +149,16 @@ def run_ai_job(job_id: str) -> None:
         _fail(job, exc)
         raise RetryableJobError(exc) from exc
 
-    # ── stage 6: generate video ───────────────────────────────────────────────
-    try:
-        _set_stage(job, "generating_video")
-        ensure_job_video(job, verbose=True)
-    except Exception as exc:
-        _fail(job, exc)
-        raise RetryableJobError(exc) from exc
+try:
+    _set_stage(run_ai_job, "generating_video")
 
-    job.status = "completed"
-    job.stage = "done"
-    job.save(update_fields=["status", "stage"])
-    logger.info("Job %s completed successfully", job.id)
+    dispatch_job_video(run_ai_job)
+
+except Exception as exc:
+    _fail(run_ai_job, exc)
+    raise RetryableJobError(exc) from exc
+
+logger.info(
+    "Job %s video render dispatched to GitHub Actions.",
+    run_ai_job.id,
+)

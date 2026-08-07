@@ -7,7 +7,7 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 import shutil
 from urllib.parse import urlparse
-
+from .renderer_dispatch import trigger_github_render
 from .renderer import RemotionRenderer, SOCIAL_FORMATS, generate_video
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,51 @@ def resolve_video_format(job) -> str:
         format_name = "ig"
     return format_name
 
+def dispatch_job_video(job) -> None:
+    """
+    Dispatch the video render to GitHub Actions.
+
+    Django/Render does not render the video locally.
+    GitHub Actions runs Remotion, uploads the finished MP4
+    to Cloudinary, and calls the Django completion webhook.
+    """
+    if job.video and default_storage.exists(job.video.name):
+        logger.info("Job %s already has a rendered video.", job.id)
+        return
+
+    props = build_promo_props(job)
+    format_name = resolve_video_format(job)
+    format_config = SOCIAL_FORMATS[format_name]
+
+    config = {
+        "compositionId": "PromoVideo",
+        "inputProps": props,
+        "width": format_config.width,
+        "height": format_config.height,
+        "fps": format_config.fps,
+        "durationInFrames": format_config.duration,
+        "outputPath": f"/tmp/render-output/{job.id}.mp4",
+
+        # GitHub Actions needs this if your composition
+        # loads media from your Django/Cloudinary backend.
+        "mediaOrigin": settings.PUBLIC_BASE_URL,
+
+        "concurrency": 2,
+        "jpegQuality": 80,
+        "x264Preset": "fast",
+    }
+
+    logger.info(
+        "Job %s → dispatching video render to GitHub Actions "
+        "(format=%s)",
+        job.id,
+        format_name,
+    )
+
+    trigger_github_render(
+        job_id=str(job.id),
+        config=config,
+    )
 
 def ensure_job_video(job, verbose: bool = False) -> Path:
     """
