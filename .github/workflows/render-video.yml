@@ -61,34 +61,69 @@ jobs:
 
       - name: Upload to Cloudinary
         id: upload
-        working-directory: remotion
         env:
           CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UNSIGNED_PRESET }}
           JOB_ID: ${{ github.event.client_payload.job_id }}
           OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
+        shell: bash
         run: |
-          echo "Uploading ${OUTPUT_PATH} to Cloudinary..."
+          set -euo pipefail
 
-          curl --fail-with-body -sS \
-            -X POST \
-            "https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload" \
-            -F "file=@${OUTPUT_PATH}" \
-            -F "public_id=promo_videos/${JOB_ID}" \
-            -F "upload_preset=${UPLOAD_PRESET}" \
-            -o /tmp/cloudinary_response.json
+          echo "Preparing Cloudinary upload..."
+
+          if [ -z "${CLOUD_NAME:-}" ]; then
+            echo "ERROR: CLOUDINARY_CLOUD_NAME secret is empty."
+            exit 1
+          fi
+
+          if [ -z "${UPLOAD_PRESET:-}" ]; then
+            echo "ERROR: CLOUDINARY_UNSIGNED_PRESET secret is empty."
+            exit 1
+          fi
+
+          if [ -z "${JOB_ID:-}" ]; then
+            echo "ERROR: job_id is empty."
+            exit 1
+          fi
+
+          if [ ! -f "${OUTPUT_PATH}" ]; then
+            echo "ERROR: Video file does not exist:"
+            echo "${OUTPUT_PATH}"
+            exit 1
+          fi
+
+          CLOUDINARY_URL="https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload"
+
+          echo "Cloudinary cloud name: ${CLOUD_NAME}"
+          echo "Output file: ${OUTPUT_PATH}"
+          echo "File size:"
+          ls -lh "${OUTPUT_PATH}"
+
+          echo "Uploading video..."
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url "${CLOUDINARY_URL}" \
+            --form "file=@${OUTPUT_PATH}" \
+            --form "public_id=promo_videos/${JOB_ID}" \
+            --form "upload_preset=${UPLOAD_PRESET}" \
+            --output /tmp/cloudinary_response.json
 
           echo "Cloudinary response:"
           cat /tmp/cloudinary_response.json
 
           VIDEO_URL=$(jq -r '.secure_url // empty' /tmp/cloudinary_response.json)
 
-          if [ -z "$VIDEO_URL" ]; then
+          if [ -z "${VIDEO_URL}" ]; then
             echo "ERROR: Cloudinary did not return secure_url."
             exit 1
           fi
 
-          echo "video_url=${VIDEO_URL}" >> "$GITHUB_OUTPUT"
+          echo "Video uploaded successfully:"
+          echo "${VIDEO_URL}"
+
+          echo "video_url=${VIDEO_URL}" >> "${GITHUB_OUTPUT}"
 
       - name: Notify Django - success
         if: success()
