@@ -1,4 +1,3 @@
-# campaign/renderer_dispatch.py
 import logging
 from typing import Any, Dict
 
@@ -14,11 +13,20 @@ class GithubDispatchError(RuntimeError):
 
 def trigger_github_render(job_id: str, config: Dict[str, Any]) -> None:
     """
-    Fires a repository_dispatch event that kicks off .github/workflows/render-video.yml
-    on the repo holding remotion/render.mjs. Does not wait for the render —
-    the workflow calls back to video_render_complete() when it's done.
+    Fires a repository_dispatch event that kicks off
+    .github/workflows/render-video.yml.
     """
-    url = f"https://api.github.com/repos/{settings.GITHUB_RENDER_REPO}/dispatches"
+
+    repo = settings.GITHUB_RENDER_REPO
+
+    url = f"https://api.github.com/repos/{repo}/dispatches"
+
+    logger.info(
+        "GitHub render dispatch → repo=%s job_id=%s",
+        repo,
+        job_id,
+    )
+
     resp = requests.post(
         url,
         headers={
@@ -36,13 +44,24 @@ def trigger_github_render(job_id: str, config: Dict[str, Any]) -> None:
         timeout=15,
     )
 
+    logger.info(
+        "GitHub dispatch response → status=%s",
+        resp.status_code,
+    )
+
     if resp.status_code != 204:
         logger.error(
             "GitHub dispatch failed for job %s: %s %s",
-            job_id, resp.status_code, resp.text,
+            job_id,
+            resp.status_code,
+            resp.text,
         )
+
         raise GithubDispatchError(
             f"GitHub dispatch returned {resp.status_code}: {resp.text}"
         )
 
-    logger.info("Dispatched render for job %s to GitHub Actions", job_id)
+    logger.info(
+        "Dispatched render for job %s to GitHub Actions",
+        job_id,
+    )
