@@ -148,17 +148,19 @@ def run_ai_job(job_id: str) -> None:
     except Exception as exc:
         _fail(job, exc)
         raise RetryableJobError(exc) from exc
+# ── stage 6: dispatch video render to GitHub Actions ──────────────────────
+    try:
+        _set_stage(job, "generating_video")
 
-try:
-    _set_stage(run_ai_job, "generating_video")
+        # Do NOT render Remotion on the Render/Django server.
+        # Send the render request to GitHub Actions instead.
+        dispatch_job_video(job)
 
-    dispatch_job_video(run_ai_job)
+    except Exception as exc:
+        _fail(job, exc)
+        raise RetryableJobError(exc) from exc
 
-except Exception as exc:
-    _fail(run_ai_job, exc)
-    raise RetryableJobError(exc) from exc
-
-logger.info(
-    "Job %s video render dispatched to GitHub Actions.",
-    run_ai_job.id,
-)
+    logger.info(
+        "Job %s video render dispatched to GitHub Actions.",
+        job.id,
+    )
