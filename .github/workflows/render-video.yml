@@ -1,36 +1,66 @@
+```yaml
 # .github/workflows/render-video.yml
+
 name: Render Promo Video
 
 on:
   repository_dispatch:
-    types: [render_video]
+    types:
+      - render_video
 
 jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: npm
           cache-dependency-path: remotion/package-lock.json
 
-      - name: Install deps
+      - name: Install dependencies
         working-directory: remotion
         run: npm ci
 
       - name: Write render config
+        env:
+          RENDER_CONFIG: ${{ toJSON(github.event.client_payload.config) }}
         run: |
-          cat <<'EOF' > /tmp/config.json
-          ${{ toJson(github.event.client_payload.config) }}
-          EOF
+          printf '%s' "$RENDER_CONFIG" > /tmp/config.json
 
-      - name: Render
+      - name: Show render config
+        run: |
+          echo "Render configuration:"
+          cat /tmp/config.json
+          echo ""
+          echo "Validating JSON..."
+          jq empty /tmp/config.json
+          echo "JSON is valid."
+
+      - name: Render video
         working-directory: remotion
-        run: node render.mjs --config /tmp/config.json --verbose
+        run: |
+          node render.mjs --config /tmp/config.json --verbose
+
+      - name: Verify rendered video
+        env:
+          OUTPUT_PATH: ${{ fromJSON(toJSON(github.event.client_payload.config)).outputPath }}
+        run: |
+          echo "Expected output: ${OUTPUT_PATH}"
+
+          if [ ! -f "${OUTPUT_PATH}" ]; then
+            echo "ERROR: Rendered video was not found."
+            exit 1
+          fi
+
+          echo "Rendered video found:"
+          ls -lh "${OUTPUT_PATH}"
 
       - name: Upload to Cloudinary
         id: upload
@@ -38,15 +68,29 @@ jobs:
           CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UNSIGNED_PRESET }}
           JOB_ID: ${{ github.event.client_payload.job_id }}
-          OUTPUT_PATH: ${{ fromJson(github.event.client_payload.config).outputPath }}
+          OUTPUT_PATH: ${{ fromJSON(toJSON(github.event.client_payload.config)).outputPath }}
         run: |
-          curl -sS -X POST "https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload" \
+          echo "Uploading ${OUTPUT_PATH} to Cloudinary..."
+
+          curl --fail-with-body -sS \
+            -X POST \
+            "https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload" \
             -F "file=@${OUTPUT_PATH}" \
             -F "public_id=promo_videos/${JOB_ID}" \
             -F "upload_preset=${UPLOAD_PRESET}" \
             -o /tmp/cloudinary_response.json
+
+          echo "Cloudinary response:"
           cat /tmp/cloudinary_response.json
-          echo "video_url=$(jq -r '.secure_url' /tmp/cloudinary_response.json)" >> "$GITHUB_OUTPUT"
+
+          VIDEO_URL=$(jq -r '.secure_url // empty' /tmp/cloudinary_response.json)
+
+          if [ -z "$VIDEO_URL" ]; then
+            echo "ERROR: Cloudinary did not return secure_url."
+            exit 1
+          fi
+
+          echo "video_url=${VIDEO_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Notify Django (success)
         if: success()
@@ -56,10 +100,23 @@ jobs:
           VIDEO_URL: ${{ steps.upload.outputs.video_url }}
           CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
         run: |
-          curl -sS -X POST "${CALLBACK_URL}" \
+          echo "Notifying Django of successful render..."
+
+          curl --fail-with-body -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
             -H "X-Callback-Secret: ${SECRET}" \
-            -d "{\"job_id\": \"${JOB_ID}\", \"status\": \"success\", \"video_url\": \"${VIDEO_URL}\"}"
+            -d "$(jq -n \
+              --arg job_id "$JOB_ID" \
+              --arg status "success" \
+              --arg video_url "$VIDEO_URL" \
+              '{
+                job_id: $job_id,
+                status: $status,
+                video_url: $video_url
+              }'
+            )"
 
       - name: Notify Django (failure)
         if: failure()
@@ -68,7 +125,18 @@ jobs:
           SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
           CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
         run: |
-          curl -sS -X POST "${CALLBACK_URL}" \
+          echo "Notifying Django that video rendering failed..."
+
+          curl --fail-with-body -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
             -H "X-Callback-Secret: ${SECRET}" \
-            -d "{\"job_id\": \"${JOB_ID}\", \"status\": \"failed\"}"
+            -d "$(jq -n \
+              --arg job_id "$JOB_ID" \
+              --arg status "failed" \
+              '{
+                job_id: $job_id,
+                status: $status
+              }'
+            )"
