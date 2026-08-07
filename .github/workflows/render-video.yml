@@ -1,4 +1,65 @@
-- name: Upload to Cloudinary
+name: Render Promo Video
+
+on:
+  repository_dispatch:
+    types:
+      - render_video
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          
+
+      - name: Install dependencies
+        working-directory: remotion
+        run: npm ci
+
+      - name: Write render config
+        env:
+          RENDER_CONFIG: ${{ toJSON(github.event.client_payload.config) }}
+        run: |
+          printf '%s' "$RENDER_CONFIG" > /tmp/config.json
+
+      - name: Validate render config
+        run: |
+          echo "Render configuration:"
+          cat /tmp/config.json
+          echo ""
+          echo "Validating JSON..."
+          jq empty /tmp/config.json
+          echo "JSON is valid."
+
+      - name: Render video
+        working-directory: remotion
+        run: |
+          node render.mjs --config /tmp/config.json --verbose
+
+      - name: Verify rendered video
+        working-directory: remotion
+        env:
+          OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
+        run: |
+          echo "Expected output: ${OUTPUT_PATH}"
+
+          if [ ! -f "${OUTPUT_PATH}" ]; then
+            echo "ERROR: Rendered video was not found."
+            exit 1
+          fi
+
+          echo "Rendered video found:"
+          ls -lh "${OUTPUT_PATH}"
+
+      - name: Upload to Cloudinary
         id: upload
         env:
           CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -9,26 +70,14 @@
         run: |
           set -euo pipefail
 
-          # Strip stray whitespace/newlines some secret managers add on paste
-          CLOUD_NAME="$(printf '%s' "${CLOUD_NAME:-}" | tr -d '[:space:]')"
-          UPLOAD_PRESET="$(printf '%s' "${UPLOAD_PRESET:-}" | tr -d '[:space:]')"
+          echo "Preparing Cloudinary upload..."
 
-          if [ -z "${CLOUD_NAME}" ]; then
+          if [ -z "${CLOUD_NAME:-}" ]; then
             echo "ERROR: CLOUDINARY_CLOUD_NAME secret is empty."
             exit 1
           fi
 
-          # Catch the exact mistake that caused today's failure: pasting the
-          # full cloudinary:// connection string instead of just the cloud name.
-          if [[ "${CLOUD_NAME}" == *"cloudinary://"* || "${CLOUD_NAME}" == *"://"* ]]; then
-            echo "ERROR: CLOUDINARY_CLOUD_NAME looks like a full CLOUDINARY_URL"
-            echo "connection string, not a bare cloud name. It should look like"
-            echo "'dxyz123abc', not 'cloudinary://key:secret@dxyz123abc'."
-            echo "Fix the secret in GitHub → Settings → Secrets → Actions."
-            exit 1
-          fi
-
-          if [ -z "${UPLOAD_PRESET}" ]; then
+          if [ -z "${UPLOAD_PRESET:-}" ]; then
             echo "ERROR: CLOUDINARY_UNSIGNED_PRESET secret is empty."
             exit 1
           fi
@@ -39,18 +88,23 @@
           fi
 
           if [ ! -f "${OUTPUT_PATH}" ]; then
-            echo "ERROR: Video file does not exist: ${OUTPUT_PATH}"
+            echo "ERROR: Video file does not exist:"
+            echo "${OUTPUT_PATH}"
             exit 1
           fi
 
-          UPLOAD_URL="https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload"
-          echo "Uploading to: ${UPLOAD_URL}"
+          CLOUDINARY_URL="https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload"
+
+          echo "Cloudinary cloud name: ${CLOUD_NAME}"
+          echo "Output file: ${OUTPUT_PATH}"
           echo "File size:"
           ls -lh "${OUTPUT_PATH}"
 
+          echo "Uploading video..."
+
           curl --fail-with-body --silent --show-error \
             --request POST \
-            --url "${UPLOAD_URL}" \
+            --url "${CLOUDINARY_URL}" \
             --form "file=@${OUTPUT_PATH}" \
             --form "public_id=promo_videos/${JOB_ID}" \
             --form "upload_preset=${UPLOAD_PRESET}" \
@@ -62,9 +116,60 @@
           VIDEO_URL=$(jq -r '.secure_url // empty' /tmp/cloudinary_response.json)
 
           if [ -z "${VIDEO_URL}" ]; then
-            echo "ERROR: Cloudinary did not return secure_url. Full response above."
+            echo "ERROR: Cloudinary did not return secure_url."
             exit 1
           fi
 
-          echo "Video uploaded successfully: ${VIDEO_URL}"
+          echo "Video uploaded successfully:"
+          echo "${VIDEO_URL}"
+
           echo "video_url=${VIDEO_URL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Notify Django - success
+        if: success()
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
+          VIDEO_URL: ${{ steps.upload.outputs.video_url }}
+          CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+        run: |
+          echo "Notifying Django of successful render..."
+
+          curl --fail-with-body -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "$(jq -n \
+              --arg job_id "${JOB_ID}" \
+              --arg status "success" \
+              --arg video_url "${VIDEO_URL}" \
+              '{
+                job_id: $job_id,
+                status: $status,
+                video_url: $video_url
+              }'
+            )"
+
+      - name: Notify Django - failure
+        if: failure()
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
+          CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+        run: |
+          echo "Notifying Django that video rendering failed..."
+
+          curl --fail-with-body -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "$(jq -n \
+              --arg job_id "${JOB_ID}" \
+              --arg status "failed" \
+              '{
+                job_id: $job_id,
+                status: $status
+              }'
+            )"
