@@ -217,8 +217,77 @@ def upload_asset(request):
 
 
 
+# campaign/views.py  (add this)
+import hmac
+import json
+import logging
+
+import requests
+from django.conf import settings
+from django.core.files.base import ContentFile
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+
+from .models import AIJob
+
+logger = logging.getLogger(__name__)
 
 
+@csrf_exempt
+@require_POST
+def video_render_complete(request):
+    provided = request.headers.get("X-Callback-Secret", "")
+    if not hmac.compare_digest(provided, settings.RENDER_CALLBACK_SECRET):
+        return JsonResponse({"error": "unauthorized"}, status=401)
+
+    try:
+        data = json.loads(request.body)
+        job_id = data["job_id"]
+        status = data["status"]  # "success" | "failed"
+    except (KeyError, ValueError):
+        return JsonResponse({"error": "bad request"}, status=400)
+
+    try:
+        job = AIJob.objects.get(id=job_id)
+    except AIJob.DoesNotExist:
+        logger.warning("video_render_complete: no AIJob with id=%s", job_id)
+        return JsonResponse({"error": "job not found"}, status=404)
+
+    if status != "success":
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = data.get("error", "GitHub Actions render failed")
+        job.save(update_fields=["status", "stage", "error"])
+        return JsonResponse({"ok": True})
+
+    video_url = data.get("video_url")
+    if not video_url:
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = "Render reported success but no video_url was provided"
+        job.save(update_fields=["status", "stage", "error"])
+        return JsonResponse({"error": "missing video_url"}, status=400)
+
+    try:
+        resp = requests.get(video_url, timeout=60)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = f"Failed to fetch rendered video: {e}"
+        job.save(update_fields=["status", "stage", "error"])
+        return JsonResponse({"error": "fetch failed"}, status=502)
+
+    job.video.save(f"{job.id}.mp4", ContentFile(resp.content), save=False)
+    job.status = "completed"
+    job.stage = "completed"
+    job.error = None
+    job.save(update_fields=["video", "status", "stage", "error"])
+
+    logger.info("Job %s → video ready", job_id)
+    return JsonResponse({"ok": True})
 
 import json
 import mimetypes

@@ -1,0 +1,74 @@
+# .github/workflows/render-video.yml
+name: Render Promo Video
+
+on:
+  repository_dispatch:
+    types: [render_video]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: Install deps
+        working-directory: remotion
+        run: npm ci
+
+      - name: Write render config
+        run: |
+          cat <<'EOF' > /tmp/config.json
+          ${{ toJson(github.event.client_payload.config) }}
+          EOF
+
+      - name: Render
+        working-directory: remotion
+        run: node render.mjs --config /tmp/config.json --verbose
+
+      - name: Upload to Cloudinary
+        id: upload
+        env:
+          CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UNSIGNED_PRESET }}
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          OUTPUT_PATH: ${{ fromJson(github.event.client_payload.config).outputPath }}
+        run: |
+          curl -sS -X POST "https://api.cloudinary.com/v1_1/${CLOUD_NAME}/video/upload" \
+            -F "file=@${OUTPUT_PATH}" \
+            -F "public_id=promo_videos/${JOB_ID}" \
+            -F "upload_preset=${UPLOAD_PRESET}" \
+            -o /tmp/cloudinary_response.json
+          cat /tmp/cloudinary_response.json
+          echo "video_url=$(jq -r '.secure_url' /tmp/cloudinary_response.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Django (success)
+        if: success()
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
+          VIDEO_URL: ${{ steps.upload.outputs.video_url }}
+          CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+        run: |
+          curl -sS -X POST "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "{\"job_id\": \"${JOB_ID}\", \"status\": \"success\", \"video_url\": \"${VIDEO_URL}\"}"
+
+      - name: Notify Django (failure)
+        if: failure()
+        env:
+          JOB_ID: ${{ github.event.client_payload.job_id }}
+          SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
+          CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+        run: |
+          curl -sS -X POST "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "{\"job_id\": \"${JOB_ID}\", \"status\": \"failed\"}"

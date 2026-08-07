@@ -102,13 +102,9 @@ def build_promo_props(job, overrides: Dict[str, Any] | None = None) -> Dict[str,
     override_image_url = fp.get("productImage")
 
     if override_image_url:
-        rel = _media_relative_path_from_url(override_image_url)
-        if rel:
-            subfolder = Path(rel).parent.as_posix() or "uploads"
-            nobg_uri = _copy_asset_to_remotion(rel, subfolder)
-        else:
-            nobg_uri = override_image_url
-
+        nobg_uri = override_image_url
+    elif job.image_nobg:
+        nobg_uri = default_storage.url(job.image_nobg.name)  # absolute URL
     if not nobg_uri and job.image_nobg:
         # job.image_nobg.name is the storage-relative key regardless of backend
         nobg_uri = _copy_asset_to_remotion(job.image_nobg.name, "nobg")

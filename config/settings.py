@@ -257,7 +257,11 @@ QSTASH_NEXT_SIGNING_KEY = config("QSTASH_NEXT_SIGNING_KEY")
  
 QSTASH_WEBHOOK_URL = f"{SITE_URL}/api/campaign/qstash/webhook/"
  
-
+# settings.py
+GITHUB_PAT = os.environ("GITHUB_PAT")
+GITHUB_RENDER_REPO = os.environ("GITHUB_RENDER_REPO")   # e.g. "yourname/yourrepo"
+RENDER_CALLBACK_SECRET = os.environ("RENDER_CALLBACK_SECRET")
+PUBLIC_BASE_URL = os.environ("PUBLIC_BASE_URL")         # e.g. "https://yourapp.onrender.com"
 QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/campaign/qstash/failure/"
 REMOVE_BG_API_KEY = os.environ.get("REMOVE_BG_API_KEY")
 PIXIAN_API_ID = os.environ.get("PIXIAN_API_ID")
