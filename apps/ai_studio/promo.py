@@ -4,8 +4,7 @@ from typing import Any, Dict
 
 from django.conf import settings
 from django.core.files.storage import default_storage
-
-from services.renderer import SOCIAL_FORMATS, normalize_promo_props
+from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
 from .services.renderer_dispatch import trigger_github_render
 
 logger = logging.getLogger(__name__)
@@ -168,65 +167,65 @@ def dispatch_job_video(job) -> None:
         raise
 
 
-def apply_render_result(
-    job,
-    *,
-    success: bool,
-    video_url: str = "",
-) -> None:
+def dispatch_preview_render(job, *, props: dict, format_name: str) -> None:
     """
-    Apply the result received from the GitHub Actions callback.
-
-    On success, the Cloudinary URL is stored on the job.
-    On failure, the job is marked as failed.
+    Like dispatch_job_video, but for one-off editor-preview exports where
+    props are supplied directly by the caller rather than built from a
+    persisted AIJob's fields.
     """
+    format_config = SOCIAL_FORMATS[format_name]
 
-    if success:
-        if not video_url:
-            raise ValueError(
-                "A video URL is required when render succeeds."
-            )
+    config = {
+        "compositionId": "PromoVideo",
+        "inputProps": normalize_promo_props(props),
+        "width": format_config.width,
+        "height": format_config.height,
+        "fps": format_config.fps,
+        "durationInFrames": format_config.duration,
+        "outputPath": f"/tmp/render-output/{job.id}.mp4",
+        "mediaOrigin": settings.PUBLIC_BASE_URL,
+        "concurrency": 2,
+        "jpegQuality": 80,
+        "x264Preset": "fast",
+    }
 
-        job.video_url = video_url
-        job.video_status = "ready"
+    job.stage = "rendering_video"
+    job.status = "processing"
+    job.save(update_fields=["stage", "status"])
 
-        # Only include these fields if they exist on your model.
-        update_fields = [
-            "video_url",
-            "video_status",
-        ]
+    try:
+        trigger_github_render(job_id=str(job.id), config=config)
+    except Exception as exc:
+        job.status = "failed"
+        job.stage = "video_dispatch_failed"
+        job.error = str(exc)
+        job.save(update_fields=["status", "stage", "error"])
+        raise
 
-        if hasattr(job, "stage"):
-            job.stage = "video_ready"
-            update_fields.append("stage")
 
-        if hasattr(job, "status"):
-            job.status = "completed"
-            update_fields.append("status")
+import requests
+from django.core.files.base import ContentFile
 
-        job.save(update_fields=update_fields)
+def apply_render_result(job, *, success: bool, video_url: str = "", error: str = "") -> None:
+    if not success:
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = error or "GitHub Actions render failed"
+        job.save(update_fields=["status", "stage", "error"])
+        return
 
-        logger.info(
-            "Video render completed successfully for job %s.",
-            job.id,
-        )
+    if not video_url:
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = "Render reported success but no video_url was provided"
+        job.save(update_fields=["status", "stage", "error"])
+        return
 
-    else:
-        job.video_status = "failed"
+    resp = requests.get(video_url, timeout=60)
+    resp.raise_for_status()
 
-        update_fields = ["video_status"]
-
-        if hasattr(job, "stage"):
-            job.stage = "video_render_failed"
-            update_fields.append("stage")
-
-        if hasattr(job, "status"):
-            job.status = "failed"
-            update_fields.append("status")
-
-        job.save(update_fields=update_fields)
-
-        logger.error(
-            "Video render failed for job %s.",
-            job.id,
-        )
+    job.video.save(f"{job.id}.mp4", ContentFile(resp.content), save=False)
+    job.status = "completed"
+    job.stage = "completed"
+    job.error = None
+    job.save(update_fields=["video", "status", "stage", "error"])
