@@ -1,3 +1,11 @@
+
+Those must **not** be inside the actual `.yml` file.
+
+## Replace `.github/workflows/render-video.yml` completely
+
+Use exactly this:
+
+:::writing{variant="document" id="74163"}
 ```yaml
 name: Render Promo Video
 
@@ -12,81 +20,54 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # ---------------------------------------------------------
-      # 1. Checkout repository
-      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # ---------------------------------------------------------
-      # 2. Setup Node
-      # ---------------------------------------------------------
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: remotion/package-lock.json
 
-      # ---------------------------------------------------------
-      # 3. Install Remotion dependencies
-      # ---------------------------------------------------------
       - name: Install dependencies
         working-directory: remotion
         run: npm ci
 
-      # ---------------------------------------------------------
-      # 4. Receive render configuration from Django
-      # ---------------------------------------------------------
       - name: Write render config
         env:
           RENDER_CONFIG: ${{ toJSON(github.event.client_payload.config) }}
         run: |
           printf '%s' "$RENDER_CONFIG" > /tmp/config.json
 
-      # ---------------------------------------------------------
-      # 5. Validate render configuration
-      # ---------------------------------------------------------
       - name: Validate render config
         run: |
           echo "Render configuration:"
           cat /tmp/config.json
           echo ""
           echo "Validating JSON..."
-
           jq empty /tmp/config.json
-
           echo "JSON is valid."
 
-      # ---------------------------------------------------------
-      # 6. Render video with Remotion
-      # ---------------------------------------------------------
       - name: Render video
         working-directory: remotion
         run: |
           node render.mjs --config /tmp/config.json --verbose
 
-      # ---------------------------------------------------------
-      # 7. Verify output exists
-      # ---------------------------------------------------------
       - name: Verify rendered video
         env:
           OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
         run: |
-          echo "Expected output:"
-          echo "$OUTPUT_PATH"
+          echo "Expected output: ${OUTPUT_PATH}"
 
-          if [ ! -f "$OUTPUT_PATH" ]; then
+          if [ ! -f "${OUTPUT_PATH}" ]; then
             echo "ERROR: Rendered video was not found."
             exit 1
           fi
 
           echo "Rendered video found:"
-          ls -lh "$OUTPUT_PATH"
+          ls -lh "${OUTPUT_PATH}"
 
-      # ---------------------------------------------------------
-      # 8. Upload video to Cloudinary
-      # ---------------------------------------------------------
       - name: Upload to Cloudinary
         id: upload
         env:
@@ -117,10 +98,7 @@ jobs:
 
           echo "video_url=${VIDEO_URL}" >> "$GITHUB_OUTPUT"
 
-      # ---------------------------------------------------------
-      # 9. Notify Django that rendering succeeded
-      # ---------------------------------------------------------
-      - name: Notify Django (success)
+      - name: Notify Django - success
         if: success()
         env:
           JOB_ID: ${{ github.event.client_payload.job_id }}
@@ -132,13 +110,13 @@ jobs:
 
           curl --fail-with-body -sS \
             -X POST \
-            "$CALLBACK_URL" \
+            "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
             -H "X-Callback-Secret: ${SECRET}" \
             -d "$(jq -n \
-              --arg job_id "$JOB_ID" \
+              --arg job_id "${JOB_ID}" \
               --arg status "success" \
-              --arg video_url "$VIDEO_URL" \
+              --arg video_url "${VIDEO_URL}" \
               '{
                 job_id: $job_id,
                 status: $status,
@@ -146,10 +124,7 @@ jobs:
               }'
             )"
 
-      # ---------------------------------------------------------
-      # 10. Notify Django that rendering failed
-      # ---------------------------------------------------------
-      - name: Notify Django (failure)
+      - name: Notify Django - failure
         if: failure()
         env:
           JOB_ID: ${{ github.event.client_payload.job_id }}
@@ -160,15 +135,14 @@ jobs:
 
           curl --fail-with-body -sS \
             -X POST \
-            "$CALLBACK_URL" \
+            "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
             -H "X-Callback-Secret: ${SECRET}" \
             -d "$(jq -n \
-              --arg job_id "$JOB_ID" \
+              --arg job_id "${JOB_ID}" \
               --arg status "failed" \
               '{
                 job_id: $job_id,
                 status: $status
               }'
             )"
-```
