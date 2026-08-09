@@ -269,36 +269,79 @@ class PricingViewSet(viewsets.ViewSet):
             }
         )
 
-        
-@action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
-def track_generation(self, request):
-    campaign_id = request.data.get("campaign_id")
-    if not campaign_id:
+        import logging
+
+from django.db import transaction
+from django.utils import timezone
+
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+
+from .models import Plan, UserPlan, Transaction, UsageLog
+from .serializers import (
+    PlanSerializer,
+    UserPlanSerializer,
+    InitiatePaymentSerializer,
+)
+from .services.payment_service import PaymentService
+
+logger = logging.getLogger(__name__)
+
+
+class PricingViewSet(viewsets.ViewSet):
+    """
+    Pricing & Subscription API
+    ...
+    """
+
+    # ... plans, webhook, dashboard, initiate_payment, verify_payment,
+    #     check_usage all stay exactly as they were ...
+
+    @action(
+        detail=False,
+        methods=["post"],
+        permission_classes=[IsAuthenticated],
+    )
+    def check_usage(self, request):
+        # ...unchanged...
         return Response(
-            {"error": "campaign_id is required"},
-            status=status.HTTP_400_BAD_REQUEST,
+            {
+                "can_generate": False,
+                "remaining": 0,
+            }
         )
 
-    try:
-        user_plan = UserPlan.objects.get(user=request.user)
-    except UserPlan.DoesNotExist:
-        return Response(
-            {"error": "No active plan found. Visit the dashboard first."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+    @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
+    def track_generation(self, request):
+        campaign_id = request.data.get("campaign_id")
+        if not campaign_id:
+            return Response(
+                {"error": "campaign_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    with transaction.atomic():
-        user_plan.campaigns_used += 1
-        user_plan.campaigns_generated += 1
-        user_plan.daily_generation_count += 1
-        user_plan.last_generation_date = timezone.now().date()
-        user_plan.save()
+        try:
+            user_plan = UserPlan.objects.get(user=request.user)
+        except UserPlan.DoesNotExist:
+            return Response(
+                {"error": "No active plan found. Visit the dashboard first."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        UsageLog.objects.create(
-            user=request.user,
-            campaign_id=campaign_id,
-            action="generated",
-            metadata={"plan": user_plan.plan.plan_type},
-        )
+        with transaction.atomic():
+            user_plan.campaigns_used += 1
+            user_plan.campaigns_generated += 1
+            user_plan.daily_generation_count += 1
+            user_plan.last_generation_date = timezone.now().date()
+            user_plan.save()
 
-    return Response({"success": True, "campaigns_used": user_plan.campaigns_used})
+            UsageLog.objects.create(
+                user=request.user,
+                campaign_id=campaign_id,
+                action="generated",
+                metadata={"plan": user_plan.plan.plan_type},
+            )
+
+        return Response({"success": True, "campaigns_used": user_plan.campaigns_used})

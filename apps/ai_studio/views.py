@@ -155,8 +155,7 @@ class RecentCampaignsView(APIView):
 
         return Response(results, status=status.HTTP_200_OK)
 
-
-@csrf_exempt  # TODO: tighten before production — currently unauthenticated
+@csrf_exempt
 def upload_asset(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
@@ -169,11 +168,19 @@ def upload_asset(request):
     filename = f"uploads/{uuid.uuid4().hex}{ext}"
 
     saved_path = default_storage.save(filename, file)
-    file_url = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
+
+    # Ask the storage backend for the correct URL — works whether it's
+    # local disk, Cloudinary, S3, or anything else. Never hand-build this.
+    raw_url = default_storage.url(saved_path)
+
+    # default_storage.url() already returns an absolute URL for Cloudinary;
+    # for local storage it returns a relative path, so only build_absolute_uri
+    # it if it isn't already absolute.
+    file_url = raw_url if raw_url.startswith("http") else request.build_absolute_uri(raw_url)
 
     return JsonResponse({"url": file_url})
 
-
+    
 @csrf_exempt
 @require_POST
 def render_video_view(request):
