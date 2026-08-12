@@ -9,6 +9,7 @@ urlpatterns = [
     path("api/auth/", include("apps.accounts.urls", namespace="accounts")),
     path("api/campaign/", include("apps.ai_studio.urls")),
     path("api/", include("apps.pricing.urls", namespace="pricing")),
+    path("api/pwa/", include("apps.pwa.urls")),
 ]
 
 if settings.DEBUG:

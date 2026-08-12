@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "anymail",
     "apps.accounts",
     "apps.ai_studio",
+    "apps.pwa",
+
 ]
 
 
