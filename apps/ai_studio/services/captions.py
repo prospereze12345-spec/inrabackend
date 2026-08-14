@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 GROQ_MODEL   = getattr(settings, "GROQ_CAPTION_MODEL", "llama-3.3-70b-versatile")
 GROQ_TIMEOUT = getattr(settings, "GROQ_REQUEST_TIMEOUT", 120)
 
+DEFAULT_CONTACT_PLACEHOLDERS = {
+    "phone":   "+234 800 000 0000",
+    "email":   "hello@yourbrand.com",
+    "website": "www.yourbrand.com",
+}
+
 
 class CaptionGenerationError(Exception):
     RETRYABLE_STAGES = {"request_error", "api_error"}
@@ -34,35 +40,6 @@ class CaptionGenerationError(Exception):
     def is_retryable(self) -> bool:
         return self.stage in self.RETRYABLE_STAGES
 
-
-
-def _parse_captions(content: str) -> dict:
-    logger.debug("Raw model output:\n%s", content)
-
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
-
-    try:
-        start = content.index("{")
-        end   = content.rindex("}") + 1
-        extracted = content[start:end]
-        return json.loads(extracted)
-    except (ValueError, json.JSONDecodeError):
-        pass
-
-    logger.error(
-        "Caption JSON parse failed. Model: %s. Raw output (first 1000 chars):\n%s",
-        GROQ_MODEL,
-        content[:1000],
-    )
-
-    raise CaptionGenerationError(
-        "json_parse_error",
-        "Could not parse captions JSON from model output",
-        raw=content[:500],  
-    )
 
 
 def _build_session() -> requests.Session:
@@ -193,6 +170,35 @@ def _parse_captions(content: str) -> dict:
         ) from exc
 
 
+def _normalize_flyer(flyer: dict) -> dict:
+    """
+    Flyer-content-only normalization (captions/hashtags/hook_variants are
+    left untouched). Guarantees:
+      - features / why_choose_us are always lists, capped at exactly 3 items
+      - phone / email / website always have a value — the model's own
+        output if present, otherwise a generic editable placeholder — so
+        the editor's Content tab (Phone/Email/Website toggles) always has
+        something to show, and the user can edit or delete it freely.
+    """
+    flyer = dict(flyer or {})
+
+    features = flyer.get("features")
+    if not isinstance(features, list):
+        features = []
+    flyer["features"] = [str(f).strip() for f in features[:3] if str(f).strip()]
+
+    why = flyer.get("why_choose_us")
+    if not isinstance(why, list):
+        why = []
+    flyer["why_choose_us"] = [str(w).strip() for w in why[:3] if str(w).strip()]
+
+    for key, placeholder in DEFAULT_CONTACT_PLACEHOLDERS.items():
+        if not str(flyer.get(key) or "").strip():
+            flyer[key] = placeholder
+
+    return flyer
+
+
 def _cache_key(product_data) -> str:
     if isinstance(product_data, str):
         try:
@@ -208,13 +214,16 @@ def _cache_key(product_data) -> str:
 
 def generate_captions(product_data) -> dict:
     """
-    Generate high-converting social media captions via Groq.
+    Generate high-converting flyer content + social media captions via Groq
+    (single call — see build_caption_prompt).
 
     Args:
         product_data: dict or JSON string from the Gemini image analysis pipeline.
 
     Returns:
         Parsed dict with keys: flyer, captions, hashtags, hook_variants.
+        flyer.features / flyer.why_choose_us / flyer.phone / flyer.email /
+        flyer.website are guaranteed present after normalization.
 
     Raises:
         CaptionGenerationError: on any failure.
@@ -232,6 +241,9 @@ def generate_captions(product_data) -> dict:
     content = _extract_content(result)
     logger.error("RAW GROQ OUTPUT:\n%s", content)
     parsed  = _parse_captions(content)
+
+    if isinstance(parsed.get("flyer"), dict):
+        parsed["flyer"] = _normalize_flyer(parsed["flyer"])
 
     set_cached(cache_key, parsed)
 

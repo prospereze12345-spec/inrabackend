@@ -73,15 +73,15 @@ CONVERSION FRAMEWORKS TO USE (pick the right one per platform):
 
 def build_caption_prompt(product_data: Union[str, dict]) -> str:
     """
-    Build a high-converting caption generation prompt.
+    Build a high-converting caption + flyer-content generation prompt.
 
     `product_data` can be:
     - A raw JSON string from the Gemini analysis pipeline
     - A dict (will be serialized cleanly before injection)
 
-    The prompt is designed to produce copy that drives DMs, WhatsApp
-    inquiries, and sales — not just engagement — for small businesses
-    with low or zero follower counts.
+    One Groq call returns BOTH the flyer text content (headline, features,
+    why_choose_us, etc — consumed by the editor's Design/Content tabs) and
+    the per-platform captions. Do not split this into two calls.
     """
     if isinstance(product_data, dict):
         product_str = json.dumps(product_data, indent=2, default=str)
@@ -119,16 +119,16 @@ Write marketing copy that:
 CRITICAL OUTPUT RULES:
 - Output ONLY valid JSON — no markdown, no explanation, no extra text
 - Every caption must be READY TO POST — not a template, not a draft
-- Do NOT use placeholder text like [your product] or [price here]
+- Do NOT use placeholder text like [your product] or [price here] ANYWHERE except the three contact fields noted below, which are meant to be generic editable defaults
 - Infer the product's value and write confidently
 - Captions must feel native to each platform's culture and language
 - Use emojis strategically (not excessively) where they boost conversion
 - Nigerian/African context where relevant (reference local buying behavior)
+- "features" and "why_choose_us" are flyer bullet points, NOT captions — keep each item to 4-6 words, no emojis, no punctuation flourishes
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RETURN EXACTLY THIS JSON:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # In build_caption_prompt(), update the RETURN EXACTLY THIS JSON section:
 
 {{
   "flyer": {{
@@ -143,7 +143,12 @@ RETURN EXACTLY THIS JSON:
       "primary": "Hex color that matches the product's brand feel e.g #0a0a0a",
       "secondary": "Contrasting hex color e.g #ffffff",
       "accent": "Highlight/CTA hex color e.g #c9a84c"
-    }}
+    }},
+    "features": ["exactly 3 short product features, 4-6 words each, no emojis"],
+    "why_choose_us": ["exactly 3 short trust/value reasons to buy, 4-6 words each, no emojis"],
+    "phone": "+234 800 000 0000",
+    "email": "hello@yourbrand.com",
+    "website": "www.yourbrand.com"
   }},
   "captions": {{
     "instagram": "Full Instagram caption. Hook line, storytelling, benefits, urgency, CTA, then 10 hashtags on a new line.",
