@@ -156,25 +156,27 @@ def dispatch_preview_render(job, *, props: dict, format_name: str) -> None:
         job.save(update_fields=["status", "stage", "error"])
         raise
 
-
 def _track_usage(job) -> None:
     """
     Server-side usage tracking — the single source of truth for
     'a campaign was generated', triggered directly by render completion
     rather than a frontend fetch call that can silently fail.
 
-    Idempotent: safe to call more than once for the same job, since it
-    checks UsageLog before incrementing.
+    Idempotent by construction: relies on a DB-level unique constraint on
+    UsageLog(campaign_id, action) — see apps/pricing/models.py — rather than
+    a plain existence check. A separate SELECT-then-CREATE (the previous
+    approach) is not race-safe: if the render callback fires twice for the
+    same job (duplicate webhook delivery, GitHub Actions retry, etc.) two
+    concurrent requests can both pass an .exists() check before either has
+    written its row, and both go on to increment usage — which is exactly
+    how 4 campaigns turned into 8 counted assets. get_or_create() below is
+    atomic against the unique constraint: Django catches the IntegrityError
+    from a losing concurrent insert and re-fetches instead, so only one
+    caller ever sees created=True.
     """
     user_id = getattr(job, "user_id", None)
     if not user_id:
         logger.info("Job %s has no associated user, skipping usage tracking.", job.id)
-        return
-
-    already_logged = UsageLog.objects.filter(
-        campaign_id=str(job.id), action="generated"
-    ).exists()
-    if already_logged:
         return
 
     with db_transaction.atomic():
@@ -184,22 +186,35 @@ def _track_usage(job) -> None:
             logger.warning("No UserPlan for user %s, skipping usage tracking.", user_id)
             return
 
+        # This is the actual idempotency guard. get_or_create() issues the
+        # INSERT and lets the DB's unique constraint decide who wins; the
+        # loser gets IntegrityError internally and Django transparently
+        # re-fetches, returning created=False. No window exists where two
+        # callers can both believe they're "first".
+        usage_log, created = UsageLog.objects.get_or_create(
+            campaign_id=str(job.id),
+            action="generated",
+            defaults={
+                "user_id": user_id,
+                "metadata": {"plan": user_plan.plan.plan_type},
+            },
+        )
+
+        if not created:
+            logger.info(
+                "Usage already tracked for job %s (user %s) — skipping duplicate increment.",
+                job.id, user_id,
+            )
+            return
+
         user_plan.campaigns_used += 1
         user_plan.campaigns_generated += 1
         user_plan.daily_generation_count += 1
         user_plan.last_generation_date = timezone.now().date()
         user_plan.save()
 
-        UsageLog.objects.create(
-            user_id=user_id,
-            campaign_id=str(job.id),
-            action="generated",
-            metadata={"plan": user_plan.plan.plan_type},
-        )
-
     logger.info("Usage tracked for job %s (user %s).", job.id, user_id)
-
-
+    
 def apply_render_result(job, *, success: bool, video_url: str = "", error: str = "") -> None:
     """
     Applies the result received from the GitHub Actions callback.
