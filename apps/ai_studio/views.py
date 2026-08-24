@@ -180,41 +180,6 @@ def upload_asset(request):
 
     return JsonResponse({"url": file_url})
 
-    
-@csrf_exempt
-@require_POST
-def render_video_view(request):
-    """
-    One-off editor-preview export. Dispatches to GitHub Actions and returns
-    immediately with a job_id to poll — does NOT render synchronously.
-    """
-    try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON body."}, status=400)
-
-    format_name = payload.get("format", "ig")
-    if format_name not in SOCIAL_FORMATS:
-        return JsonResponse(
-            {"error": f"Unknown format '{format_name}'. Available: {list(SOCIAL_FORMATS.keys())}"},
-            status=400,
-        )
-
-    props = normalize_promo_props(payload.get("props"))
-
-    job = PreviewRenderJob.objects.create(status="processing", stage="rendering_video")
-
-    try:
-        dispatch_preview_render(job, props=props, format_name=format_name)
-    except Exception as exc:
-        job.status = "failed"
-        job.error = str(exc)
-        job.save(update_fields=["status", "error"])
-        return JsonResponse({"error": f"Render dispatch failed: {exc}"}, status=500)
-
-    return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
-
-
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
@@ -225,29 +190,30 @@ def video_render_complete(request):
     try:
         data = json.loads(request.body)
         job_id = data["job_id"]
-        render_status = data["status"]  # renamed from `status` — was shadowing the DRF import
+        render_status = data["status"]
     except (KeyError, ValueError):
         return JsonResponse({"error": "bad request"}, status=400)
 
+    # Use the correct model: PreviewRenderJob (not AIJob)
     try:
-        job = AIJob.objects.get(id=job_id)
-    except AIJob.DoesNotExist:
-        logger.warning("video_render_complete: no AIJob with id=%s", job_id)
+        job = PreviewRenderJob.objects.get(id=job_id)
+    except PreviewRenderJob.DoesNotExist:
+        logger.warning("video_render_complete: no PreviewRenderJob with id=%s", job_id)
         return JsonResponse({"error": "job not found"}, status=404)
 
-    try:
-        apply_render_result(
-            job,
-            success=(render_status == "success"),
-            video_url=data.get("video_url", ""),
-            error=data.get("error", ""),
-        )
-    except requests.RequestException as e:
-        logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
+    # Update job status based on render result
+    if render_status == "success":
+        job.status = "completed"
+        job.stage = "video_rendered"
+        job.video_url = data.get("video_url", "")
+    else:
         job.status = "failed"
         job.stage = "video_render_failed"
-        job.error = f"Failed to fetch rendered video: {e}"
-        job.save(update_fields=["status", "stage", "error"])
-        return JsonResponse({"error": "fetch failed"}, status=502)
+        job.error = data.get("error", "Unknown render error")
+
+    job.save(update_fields=["status", "stage", "video_url", "error"])
+
+    # If you also have an AIJob, you can fetch it via a relation (e.g., job.ai_job)
+    # and update that as well.
 
     return JsonResponse({"ok": True})
