@@ -39,122 +39,40 @@ class CreateAIJobView(APIView):
 
         return Response({"job_id": str(job.id), "status": job.status}, status=202)
 
-
 class JobStatusView(APIView):
     def get(self, request, job_id):
+        job, job_kind = None, None
         try:
             job = AIJob.objects.get(id=job_id)
+            job_kind = "aijob"
         except AIJob.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            try:
+                job = PreviewRenderJob.objects.get(id=job_id)
+                job_kind = "preview"
+            except PreviewRenderJob.DoesNotExist:
+                logger.warning("JobStatusView: no job found for id=%s", job_id)
+                return Response({"error": "job not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        status_map = {
-            "pending":    "pending",
-            "processing": "processing",
-            "completed":  "done",
-            "failed":     "error",
-        }
+        if job_kind == "aijob":
+            status_map = {
+                "pending":    "pending",
+                "processing": "processing",
+                "completed":  "done",
+                "failed":     "error",
+            }
+        else:
+            # PreviewRenderJob only ever moves through processing → completed/failed
+            # (see render_video_view / dispatch_preview_render)
+            status_map = {
+                "processing": "processing",
+                "completed":  "done",
+                "failed":     "error",
+            }
+
         return Response({
             "job_id": str(job.id),
             "status": status_map.get(job.status, "pending"),
         })
-
-
-class JobResultView(APIView):
-    permission_classes = [IsAuthenticated]
-    PLATFORM_MAP = {
-        "instagram": "Instagram",
-        "tiktok": "TikTok",
-        "twitter": "Twitter",
-        "facebook": "Facebook",
-        "whatsapp": "WhatsApp",
-    }
-
-    def _absolute_url(self, request, file_field):
-        if not file_field:
-            return None
-        return request.build_absolute_uri(file_field.url)
-
-    def get(self, request, job_id):
-        try:
-            job = AIJob.objects.get(id=job_id)
-        except AIJob.DoesNotExist:
-            return Response(
-                {"error": "Job not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if job.status != "completed":
-            return Response(
-                {
-                    "job_id": str(job.id),
-                    "status": job.status,
-                    "error": "Job not complete",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        raw_captions = (job.captions or {}).get("captions", {})
-
-        captions = [
-            {"platform": label, "text": raw_captions[key]}
-            for key, label in self.PLATFORM_MAP.items()
-            if raw_captions.get(key)
-        ]
-
-        flyer = {
-            **(job.flyer_props or {}),
-            "productImage": self._absolute_url(request, job.image_nobg) or "",
-        }
-
-        video_url = None
-        if job.video:
-            try:
-                video_url = request.build_absolute_uri(job.video.url)
-            except Exception:
-                video_url = str(job.video)
-
-        return Response(
-            {
-                "job_id": str(job.id),
-                "status": "done",
-                "png_url": self._absolute_url(request, job.image_nobg),
-                "flyer_url": self._absolute_url(request, job.flyer),
-                "video_url": video_url,
-                "captions": captions,
-                "flyer": flyer,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class RecentCampaignsView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def _absolute_url(self, request, file_field):
-        if not file_field:
-            return None
-        return request.build_absolute_uri(file_field.url)
-
-    def get(self, request):
-        jobs = (
-            AIJob.objects
-            .filter(user=request.user, status="completed")
-            .order_by("-created_at")[:20]
-        )
-
-        results = [
-            {
-                "job_id": str(job.id),
-                "headline": (job.flyer_props or {}).get("headline"),
-                "png_url": self._absolute_url(request, job.image_nobg),
-                "template_category": (job.flyer_props or {}).get("templateCategory"),
-                "created_at": job.created_at.isoformat(),
-            }
-            for job in jobs
-        ]
-
-        return Response(results, status=status.HTTP_200_OK)
-
 @csrf_exempt
 def upload_asset(request):
     if request.method != "POST":
@@ -214,7 +132,6 @@ def render_video_view(request):
 
     return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
 
-
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
@@ -229,25 +146,42 @@ def video_render_complete(request):
     except (KeyError, ValueError):
         return JsonResponse({"error": "bad request"}, status=400)
 
+    job, job_kind = None, None
     try:
         job = AIJob.objects.get(id=job_id)
+        job_kind = "aijob"
     except AIJob.DoesNotExist:
-        logger.warning("video_render_complete: no AIJob with id=%s", job_id)
-        return JsonResponse({"error": "job not found"}, status=404)
+        try:
+            job = PreviewRenderJob.objects.get(id=job_id)
+            job_kind = "preview"
+        except PreviewRenderJob.DoesNotExist:
+            logger.warning("video_render_complete: no job found for id=%s", job_id)
+            return JsonResponse({"error": "job not found"}, status=404)
 
-    try:
-        apply_render_result(
-            job,
-            success=(render_status == "success"),
-            video_url=data.get("video_url", ""),
-            error=data.get("error", ""),
-        )
-    except requests.RequestException as e:
-        logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
-        job.status = "failed"
-        job.stage = "video_render_failed"
-        job.error = f"Failed to fetch rendered video: {e}"
-        job.save(update_fields=["status", "stage", "error"])
-        return JsonResponse({"error": "fetch failed"}, status=502)
+    if job_kind == "aijob":
+        try:
+            apply_render_result(
+                job,
+                success=(render_status == "success"),
+                video_url=data.get("video_url", ""),
+                error=data.get("error", ""),
+            )
+        except requests.RequestException as e:
+            logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
+            job.status = "failed"
+            job.stage = "video_render_failed"
+            job.error = f"Failed to fetch rendered video: {e}"
+            job.save(update_fields=["status", "stage", "error"])
+            return JsonResponse({"error": "fetch failed"}, status=502)
+    else:
+        # PreviewRenderJob is a lighter record than AIJob — no external
+        # fetch/apply step, just record the outcome GitHub already gave us.
+        job.status = "completed" if render_status == "success" else "failed"
+        job.error = data.get("error", "")
+        update_fields = ["status", "error"]
+        if hasattr(job, "video_url"):
+            job.video_url = data.get("video_url", "")
+            update_fields.append("video_url")
+        job.save(update_fields=update_fields)
 
     return JsonResponse({"ok": True})
