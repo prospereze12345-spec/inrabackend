@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from rest_framework import status
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -22,76 +22,8 @@ from .promo import apply_render_result, dispatch_preview_render
 from .services.qstash_client import enqueue_ai_job
 from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
 
-
 logger = logging.getLogger(__name__)
 
-
-# ============================================================================
-# HELPERS
-# ============================================================================
-
-def _find_job(job_id):
-    """
-    Find a job by ID across AIJob and PreviewRenderJob.
-
-    Returns:
-        (job, "aijob")
-        (job, "preview")
-        (None, None)
-    """
-    try:
-        return AIJob.objects.get(id=job_id), "aijob"
-    except AIJob.DoesNotExist:
-        pass
-
-    try:
-        return PreviewRenderJob.objects.get(id=job_id), "preview"
-    except PreviewRenderJob.DoesNotExist:
-        return None, None
-
-
-def _get_job_status(status_value):
-    """
-    Normalize internal job statuses to the public API statuses
-    expected by the frontend.
-    """
-    return {
-        "pending": "pending",
-        "processing": "processing",
-        "completed": "done",
-        "done": "done",
-        "failed": "error",
-        "error": "error",
-    }.get(status_value, "pending")
-
-
-def _serialize_file_value(value, request=None):
-    """
-    Convert Django FileField/ImageField values into usable URLs.
-
-    This prevents DRF responses from accidentally exposing FileField
-    objects instead of strings.
-    """
-    if not value:
-        return ""
-
-    if hasattr(value, "url"):
-        try:
-            url = value.url
-
-            if request and url and not url.startswith(("http://", "https://")):
-                return request.build_absolute_uri(url)
-
-            return url
-        except ValueError:
-            return ""
-
-    return value
-
-
-# ============================================================================
-# CREATE AI JOB
-# ============================================================================
 
 class CreateAIJobView(APIView):
     parser_classes = [MultiPartParser, FormParser]
@@ -99,657 +31,229 @@ class CreateAIJobView(APIView):
 
     def post(self, request):
         image = request.FILES.get("image")
-
         if not image:
-            return Response(
-                {"error": "Image required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "Image required"}, status=400)
 
-        job = AIJob.objects.create(
-            image=image,
-            user=request.user,
-        )
+        job = AIJob.objects.create(image=image, user=request.user)
+        enqueue_ai_job(str(job.id))
 
-        try:
-            enqueue_ai_job(str(job.id))
+        return Response({"job_id": str(job.id), "status": job.status}, status=202)
 
-        except Exception:
-            logger.exception(
-                "Failed to enqueue AI job %s",
-                job.id,
-            )
-
-            update_fields = []
-
-            if hasattr(job, "status"):
-                job.status = "failed"
-                update_fields.append("status")
-
-            if hasattr(job, "error"):
-                job.error = "Failed to enqueue AI job."
-                update_fields.append("error")
-
-            if update_fields:
-                job.save(update_fields=update_fields)
-
-            return Response(
-                {"error": "Failed to enqueue AI job."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        return Response(
-            {
-                "job_id": str(job.id),
-                "status": job.status,
-            },
-            status=status.HTTP_202_ACCEPTED,
-        )
-
-
-# ============================================================================
-# JOB STATUS
-# ============================================================================
 
 class JobStatusView(APIView):
-    permission_classes = [AllowAny]
-
     def get(self, request, job_id):
-        job, job_kind = _find_job(job_id)
-
-        if job is None:
-            logger.warning(
-                "JobStatusView: no job found for id=%s",
-                job_id,
-            )
-
-            return Response(
-                {"error": "job not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        response = {
-            "job_id": str(job.id),
-            "status": _get_job_status(job.status),
-            "job_type": job_kind,
+            job, job_kind = None, None
+    try:
+        job = AIJob.objects.get(id=job_id)
+        job_kind = "aijob"
+    except AIJob.DoesNotExist:
+        try:
+            job = PreviewRenderJob.objects.get(id=job_id)
+            job_kind = "preview"
+        except PreviewRenderJob.DoesNotExist:
+            logger.warning("video_render_complete: no job found for id=%s", job_id)
+     return JsonResponse({"error": "job not found"}, status=404)
+        status_map = {
+            "pending":    "pending",
+            "processing": "processing",
+            "completed":  "done",
+            "failed":     "error",
         }
+        return Response({
+            "job_id": str(job.id),
+            "status": status_map.get(job.status, "pending"),
+        })
 
-        if hasattr(job, "stage"):
-            response["stage"] = job.stage or ""
-
-        if hasattr(job, "error"):
-            response["error"] = job.error or ""
-
-        if hasattr(job, "video_url"):
-            response["video_url"] = _serialize_file_value(
-                job.video_url,
-                request,
-            )
-
-        return Response(
-            response,
-            status=status.HTTP_200_OK,
-        )
-
-
-# ============================================================================
-# JOB RESULT
-# ============================================================================
 
 class JobResultView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    PLATFORM_MAP = {
+        "instagram": "Instagram",
+        "tiktok": "TikTok",
+        "twitter": "Twitter",
+        "facebook": "Facebook",
+        "whatsapp": "WhatsApp",
+    }
+
+    def _absolute_url(self, request, file_field):
+        if not file_field:
+            return None
+        return request.build_absolute_uri(file_field.url)
 
     def get(self, request, job_id):
-        job, job_kind = _find_job(job_id)
-
-        if job is None:
-            logger.warning(
-                "JobResultView: no job found for id=%s",
-                job_id,
-            )
-
+        try:
+            job = AIJob.objects.get(id=job_id)
+        except AIJob.DoesNotExist:
             return Response(
-                {"error": "job not found"},
+                {"error": "Job not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        current_status = _get_job_status(job.status)
-
-        if current_status != "done":
+        if job.status != "completed":
             return Response(
                 {
                     "job_id": str(job.id),
-                    "job_type": job_kind,
-                    "status": current_status,
-                    "result": None,
+                    "status": job.status,
+                    "error": "Job not complete",
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        result = {}
+        raw_captions = (job.captions or {}).get("captions", {})
 
-        result_fields = (
-            "video_url",
-            "image_url",
-            "image_nobg",
-            "caption",
-            "result",
-            "output",
-        )
+        captions = [
+            {"platform": label, "text": raw_captions[key]}
+            for key, label in self.PLATFORM_MAP.items()
+            if raw_captions.get(key)
+        ]
 
-        for field_name in result_fields:
-            if not hasattr(job, field_name):
-                continue
+        flyer = {
+            **(job.flyer_props or {}),
+            "productImage": self._absolute_url(request, job.image_nobg) or "",
+        }
 
-            value = getattr(job, field_name)
-
-            if value in (None, ""):
-                continue
-
-            if field_name in {
-                "video_url",
-                "image_url",
-                "image_nobg",
-            }:
-                value = _serialize_file_value(
-                    value,
-                    request,
-                )
-
-            result[field_name] = value
+        video_url = None
+        if job.video:
+            try:
+                video_url = request.build_absolute_uri(job.video.url)
+            except Exception:
+                video_url = str(job.video)
 
         return Response(
             {
                 "job_id": str(job.id),
-                "job_type": job_kind,
                 "status": "done",
-                "result": result,
+                "png_url": self._absolute_url(request, job.image_nobg),
+                "flyer_url": self._absolute_url(request, job.flyer),
+                "video_url": video_url,
+                "captions": captions,
+                "flyer": flyer,
             },
             status=status.HTTP_200_OK,
         )
 
 
-# ============================================================================
-# RECENT CAMPAIGNS
-# ============================================================================
-
 class RecentCampaignsView(APIView):
-    """
-    Return recent campaigns for the authenticated user.
-
-    IMPORTANT:
-    This endpoint intentionally returns the campaigns ARRAY directly.
-
-    The frontend currently expects:
-
-        recentCampaigns.slice(...)
-
-    Therefore the response must be:
-
-        [
-            {...},
-            {...}
-        ]
-
-    and NOT:
-
-        {
-            "campaigns": [...],
-            "count": 1
-        }
-
-    Changing the response to an object causes:
-        TypeError: ec.slice is not a function
-    """
-
     permission_classes = [IsAuthenticated]
 
+    def _absolute_url(self, request, file_field):
+        if not file_field:
+            return None
+        return request.build_absolute_uri(file_field.url)
+
     def get(self, request):
-        limit_param = request.query_params.get("limit", "10")
-
-        try:
-            limit = int(limit_param)
-        except (TypeError, ValueError):
-            limit = 10
-
-        # Protect the endpoint from unreasonable values.
-        limit = max(1, min(limit, 50))
-
-        queryset = AIJob.objects.filter(
-            user=request.user
+        jobs = (
+            AIJob.objects
+            .filter(user=request.user, status="completed")
+            .order_by("-created_at")[:20]
         )
 
-        # Determine the available timestamp field without assuming
-        # a specific model implementation.
-        field_names = {
-            field.name
-            for field in AIJob._meta.get_fields()
-        }
-
-        if "created_at" in field_names:
-            queryset = queryset.order_by("-created_at")
-
-        elif "created" in field_names:
-            queryset = queryset.order_by("-created")
-
-        elif "updated_at" in field_names:
-            queryset = queryset.order_by("-updated_at")
-
-        elif "updated" in field_names:
-            queryset = queryset.order_by("-updated")
-
-        jobs = queryset[:limit]
-
-        campaigns = []
-
-        for job in jobs:
-            campaign = {
+        results = [
+            {
                 "job_id": str(job.id),
-                "status": _get_job_status(
-                    getattr(job, "status", "pending")
-                ),
+                "headline": (job.flyer_props or {}).get("headline"),
+                "png_url": self._absolute_url(request, job.image_nobg),
+                "template_category": (job.flyer_props or {}).get("templateCategory"),
+                "created_at": job.created_at.isoformat(),
             }
+            for job in jobs
+        ]
 
-            # Optional campaign fields.
-            for field_name in (
-                "stage",
-                "caption",
-                "error",
-            ):
-                if hasattr(job, field_name):
-                    value = getattr(job, field_name)
-
-                    if value is not None:
-                        campaign[field_name] = value
-
-            # File/image/video fields.
-            for field_name in (
-                "video_url",
-                "image_url",
-                "image_nobg",
-            ):
-                if hasattr(job, field_name):
-                    value = getattr(job, field_name)
-
-                    campaign[field_name] = _serialize_file_value(
-                        value,
-                        request,
-                    )
-
-            # Timestamp fields.
-            for field_name in (
-                "created_at",
-                "created",
-                "updated_at",
-                "updated",
-            ):
-                if hasattr(job, field_name):
-                    value = getattr(job, field_name)
-
-                    if value is not None:
-                        campaign[field_name] = value.isoformat()
-
-            campaigns.append(campaign)
-
-        # IMPORTANT:
-        # Return the ARRAY directly.
-        #
-        # Frontend expects:
-        # recentCampaigns.slice(...)
-        #
-        # Do NOT return:
-        # {"campaigns": campaigns, "count": len(campaigns)}
-        return Response(
-            campaigns,
-            status=status.HTTP_200_OK,
-        )
-
-
-# ============================================================================
-# ASSET UPLOAD
-# ============================================================================
+        return Response(results, status=status.HTTP_200_OK)
 
 @csrf_exempt
-@require_POST
 def upload_asset(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
     file = request.FILES.get("file")
-
     if not file:
-        return JsonResponse(
-            {"error": "No file provided"},
-            status=400,
-        )
+        return JsonResponse({"error": "No file provided"}, status=400)
 
-    extension = os.path.splitext(file.name)[1].lower()
+    ext = os.path.splitext(file.name)[1]
+    filename = f"uploads/{uuid.uuid4().hex}{ext}"
 
-    filename = (
-        f"uploads/{uuid.uuid4().hex}{extension}"
-    )
+    saved_path = default_storage.save(filename, file)
 
-    try:
-        saved_path = default_storage.save(
-            filename,
-            file,
-        )
+    # Ask the storage backend for the correct URL — works whether it's
+    # local disk, Cloudinary, S3, or anything else. Never hand-build this.
+    raw_url = default_storage.url(saved_path)
 
-        raw_url = default_storage.url(
-            saved_path
-        )
+    # default_storage.url() already returns an absolute URL for Cloudinary;
+    # for local storage it returns a relative path, so only build_absolute_uri
+    # it if it isn't already absolute.
+    file_url = raw_url if raw_url.startswith("http") else request.build_absolute_uri(raw_url)
 
-    except Exception:
-        logger.exception(
-            "Failed to save uploaded asset"
-        )
+    return JsonResponse({"url": file_url})
 
-        return JsonResponse(
-            {"error": "Failed to save file."},
-            status=500,
-        )
-
-    if raw_url.startswith(("http://", "https://")):
-        file_url = raw_url
-    else:
-        file_url = request.build_absolute_uri(
-            raw_url
-        )
-
-    return JsonResponse(
-        {
-            "url": file_url,
-        },
-        status=200,
-    )
-
-
-# ============================================================================
-# VIDEO RENDER DISPATCH
-# ============================================================================
-
+    
 @csrf_exempt
 @require_POST
 def render_video_view(request):
     """
-    Dispatch an editor-preview video render.
-
-    The request returns immediately with a PreviewRenderJob ID.
-    The frontend polls JobStatusView for completion.
+    One-off editor-preview export. Dispatches to GitHub Actions and returns
+    immediately with a job_id to poll — does NOT render synchronously.
     """
-
     try:
-        payload = json.loads(
-            request.body.decode("utf-8")
-        )
-
+        payload = json.loads(request.body.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse(
-            {"error": "Invalid JSON body."},
-            status=400,
-        )
+        return JsonResponse({"error": "Invalid JSON body."}, status=400)
 
-    if not isinstance(payload, dict):
-        return JsonResponse(
-            {"error": "JSON body must be an object."},
-            status=400,
-        )
-
-    format_name = payload.get(
-        "format",
-        "ig",
-    )
-
+    format_name = payload.get("format", "ig")
     if format_name not in SOCIAL_FORMATS:
         return JsonResponse(
-            {
-                "error": (
-                    f"Unknown format '{format_name}'. "
-                    f"Available: "
-                    f"{list(SOCIAL_FORMATS.keys())}"
-                )
-            },
+            {"error": f"Unknown format '{format_name}'. Available: {list(SOCIAL_FORMATS.keys())}"},
             status=400,
         )
 
-    try:
-        props = normalize_promo_props(
-            payload.get("props")
-        )
+    props = normalize_promo_props(payload.get("props"))
 
-    except Exception:
-        logger.exception(
-            "Failed to normalize render props"
-        )
-
-        return JsonResponse(
-            {"error": "Invalid render properties."},
-            status=400,
-        )
-
-    job = PreviewRenderJob.objects.create(
-        status="processing",
-        stage="rendering_video",
-    )
+    job = PreviewRenderJob.objects.create(status="processing", stage="rendering_video")
 
     try:
-        dispatch_preview_render(
-            job,
-            props=props,
-            format_name=format_name,
-        )
-
+        dispatch_preview_render(job, props=props, format_name=format_name)
     except Exception as exc:
-        logger.exception(
-            "Render dispatch failed for preview job %s",
-            job.id,
-        )
-
         job.status = "failed"
+        job.error = str(exc)
+        job.save(update_fields=["status", "error"])
+        return JsonResponse({"error": f"Render dispatch failed: {exc}"}, status=500)
 
-        update_fields = ["status"]
+    return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
 
-        if hasattr(job, "error"):
-            job.error = str(exc)
-            update_fields.append("error")
-
-        job.save(
-            update_fields=update_fields
-        )
-
-        return JsonResponse(
-            {
-                "error": "Render dispatch failed.",
-                "detail": str(exc),
-            },
-            status=500,
-        )
-
-    return JsonResponse(
-        {
-            "job_id": str(job.id),
-            "status": "processing",
-        },
-        status=202,
-    )
-
-
-# ============================================================================
-# VIDEO RENDER CALLBACK
-# ============================================================================
 
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
-    expected_secret = getattr(
-        settings,
-        "RENDER_CALLBACK_SECRET",
-        "",
-    )
-
-    provided_secret = request.headers.get(
-        "X-Callback-Secret",
-        "",
-    )
-
-    if (
-        not expected_secret
-        or not hmac.compare_digest(
-            provided_secret,
-            expected_secret,
-        )
-    ):
-        logger.warning(
-            "Unauthorized render callback received"
-        )
-
-        return JsonResponse(
-            {"error": "unauthorized"},
-            status=401,
-        )
+    provided = request.headers.get("X-Callback-Secret", "")
+    if not hmac.compare_digest(provided, settings.RENDER_CALLBACK_SECRET):
+        return JsonResponse({"error": "unauthorized"}, status=401)
 
     try:
-        data = json.loads(
-            request.body.decode("utf-8")
+        data = json.loads(request.body)
+        job_id = data["job_id"]
+        render_status = data["status"]  # renamed from `status` — was shadowing the DRF import
+    except (KeyError, ValueError):
+        return JsonResponse({"error": "bad request"}, status=400)
+
+    try:
+        job = AIJob.objects.get(id=job_id)
+    except AIJob.DoesNotExist:
+        logger.warning("video_render_complete: no AIJob with id=%s", job_id)
+        return JsonResponse({"error": "job not found"}, status=404)
+
+    try:
+        apply_render_result(
+            job,
+            success=(render_status == "success"),
+            video_url=data.get("video_url", ""),
+            error=data.get("error", ""),
         )
+    except requests.RequestException as e:
+        logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = f"Failed to fetch rendered video: {e}"
+        job.save(update_fields=["status", "stage", "error"])
+        return JsonResponse({"error": "fetch failed"}, status=502)
 
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse(
-            {"error": "bad request"},
-            status=400,
-        )
-
-    if not isinstance(data, dict):
-        return JsonResponse(
-            {"error": "bad request"},
-            status=400,
-        )
-
-    job_id = data.get("job_id")
-    render_status = data.get("status")
-
-    if not job_id or not render_status:
-        return JsonResponse(
-            {
-                "error": (
-                    "job_id and status are required"
-                )
-            },
-            status=400,
-        )
-
-    job, job_kind = _find_job(job_id)
-
-    if job is None:
-        logger.warning(
-            "video_render_complete: "
-            "no job found for id=%s",
-            job_id,
-        )
-
-        return JsonResponse(
-            {"error": "job not found"},
-            status=404,
-        )
-
-    # ------------------------------------------------------------------------
-    # AIJob
-    # ------------------------------------------------------------------------
-
-    if job_kind == "aijob":
-        try:
-            apply_render_result(
-                job,
-                success=(
-                    render_status == "success"
-                ),
-                video_url=data.get(
-                    "video_url",
-                    "",
-                ),
-                error=data.get(
-                    "error",
-                    "",
-                ),
-            )
-
-        except requests.RequestException as exc:
-            logger.exception(
-                "Failed to fetch rendered video "
-                "for job %s",
-                job_id,
-            )
-
-            job.status = "failed"
-
-            update_fields = ["status"]
-
-            if hasattr(job, "stage"):
-                job.stage = "video_render_failed"
-                update_fields.append("stage")
-
-            if hasattr(job, "error"):
-                job.error = (
-                    "Failed to fetch rendered "
-                    f"video: {exc}"
-                )
-                update_fields.append("error")
-
-            job.save(
-                update_fields=update_fields
-            )
-
-            return JsonResponse(
-                {"error": "fetch failed"},
-                status=502,
-            )
-
-        except Exception:
-            logger.exception(
-                "Failed to apply render result "
-                "for job %s",
-                job_id,
-            )
-
-            return JsonResponse(
-                {
-                    "error": (
-                        "failed to apply "
-                        "render result"
-                    )
-                },
-                status=500,
-            )
-
-    # ------------------------------------------------------------------------
-    # PreviewRenderJob
-    # ------------------------------------------------------------------------
-
-    else:
-        job.status = (
-            "completed"
-            if render_status == "success"
-            else "failed"
-        )
-
-        update_fields = ["status"]
-
-        if hasattr(job, "error"):
-            job.error = data.get(
-                "error",
-                "",
-            )
-            update_fields.append("error")
-
-        if hasattr(job, "video_url"):
-            job.video_url = data.get(
-                "video_url",
-                "",
-            )
-            update_fields.append("video_url")
-
-        job.save(
-            update_fields=update_fields
-        )
-
-    return JsonResponse(
-        {"ok": True},
-        status=200,
-    )
+    return JsonResponse({"ok": True})
