@@ -26,63 +26,72 @@ from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ============================================================================
+# HELPERS
+# ============================================================================
 
 def _find_job(job_id):
     """
-    Resolve a job ID against both AIJob and PreviewRenderJob.
+    Find a job by ID across AIJob and PreviewRenderJob.
 
     Returns:
-        tuple[job, job_kind]
-        where job_kind is either "aijob" or "preview".
-
-    Returns:
-        (None, None) if no matching job exists.
+        (job, "aijob")
+        (job, "preview")
+        (None, None)
     """
     try:
-        job = AIJob.objects.get(id=job_id)
-        return job, "aijob"
+        return AIJob.objects.get(id=job_id), "aijob"
     except AIJob.DoesNotExist:
         pass
 
     try:
-        job = PreviewRenderJob.objects.get(id=job_id)
-        return job, "preview"
+        return PreviewRenderJob.objects.get(id=job_id), "preview"
     except PreviewRenderJob.DoesNotExist:
         return None, None
 
 
-def _serialize_job(job, job_kind):
+def _get_job_status(status_value):
     """
-    Convert a job model into a stable API response.
-
-    This intentionally avoids assuming that every field exists on both
-    AIJob and PreviewRenderJob.
+    Normalize internal job statuses to the public API statuses
+    expected by the frontend.
     """
-    data = {
-        "job_id": str(job.id),
-        "status": job.status,
-    }
-
-    if hasattr(job, "stage"):
-        data["stage"] = job.stage
-
-    if hasattr(job, "error"):
-        data["error"] = job.error or ""
-
-    if hasattr(job, "video_url"):
-        data["video_url"] = job.video_url or ""
-
-    data["job_type"] = job_kind
-
-    return data
+    return {
+        "pending": "pending",
+        "processing": "processing",
+        "completed": "done",
+        "done": "done",
+        "failed": "error",
+        "error": "error",
+    }.get(status_value, "pending")
 
 
-# ---------------------------------------------------------------------------
-# AI Job Creation
-# ---------------------------------------------------------------------------
+def _serialize_file_value(value, request=None):
+    """
+    Convert Django FileField/ImageField values into usable URLs.
+
+    This prevents DRF responses from accidentally exposing FileField
+    objects instead of strings.
+    """
+    if not value:
+        return ""
+
+    if hasattr(value, "url"):
+        try:
+            url = value.url
+
+            if request and url and not url.startswith(("http://", "https://")):
+                return request.build_absolute_uri(url)
+
+            return url
+        except ValueError:
+            return ""
+
+    return value
+
+
+# ============================================================================
+# CREATE AI JOB
+# ============================================================================
 
 class CreateAIJobView(APIView):
     parser_classes = [MultiPartParser, FormParser]
@@ -104,26 +113,21 @@ class CreateAIJobView(APIView):
 
         try:
             enqueue_ai_job(str(job.id))
+
         except Exception:
             logger.exception(
                 "Failed to enqueue AI job %s",
                 job.id,
             )
 
-            # The database record exists, but the background job was never
-            # successfully queued. Mark it failed when the model supports it.
-            if hasattr(job, "status"):
-                job.status = "failed"
-
-            if hasattr(job, "error"):
-                job.error = "Failed to enqueue AI job."
-
             update_fields = []
 
             if hasattr(job, "status"):
+                job.status = "failed"
                 update_fields.append("status")
 
             if hasattr(job, "error"):
+                job.error = "Failed to enqueue AI job."
                 update_fields.append("error")
 
             if update_fields:
@@ -143,9 +147,9 @@ class CreateAIJobView(APIView):
         )
 
 
-# ---------------------------------------------------------------------------
-# Job Status
-# ---------------------------------------------------------------------------
+# ============================================================================
+# JOB STATUS
+# ============================================================================
 
 class JobStatusView(APIView):
     permission_classes = [AllowAny]
@@ -164,43 +168,35 @@ class JobStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if job_kind == "aijob":
-            status_map = {
-                "pending": "pending",
-                "processing": "processing",
-                "completed": "done",
-                "failed": "error",
-            }
-        else:
-            status_map = {
-                "pending": "pending",
-                "processing": "processing",
-                "completed": "done",
-                "failed": "error",
-            }
+        response = {
+            "job_id": str(job.id),
+            "status": _get_job_status(job.status),
+            "job_type": job_kind,
+        }
 
-        response = _serialize_job(job, job_kind)
+        if hasattr(job, "stage"):
+            response["stage"] = job.stage or ""
 
-        response["status"] = status_map.get(
-            job.status,
-            "pending",
+        if hasattr(job, "error"):
+            response["error"] = job.error or ""
+
+        if hasattr(job, "video_url"):
+            response["video_url"] = _serialize_file_value(
+                job.video_url,
+                request,
+            )
+
+        return Response(
+            response,
+            status=status.HTTP_200_OK,
         )
 
-        return Response(response)
 
-
-# ---------------------------------------------------------------------------
-# Job Result
-# ---------------------------------------------------------------------------
+# ============================================================================
+# JOB RESULT
+# ============================================================================
 
 class JobResultView(APIView):
-    """
-    Return the final result for a completed job.
-
-    The frontend can use this endpoint after JobStatusView reports
-    `done`.
-    """
-
     permission_classes = [AllowAny]
 
     def get(self, request, job_id):
@@ -217,21 +213,14 @@ class JobResultView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if job.status not in {"completed", "done"}:
-            status_map = {
-                "pending": "pending",
-                "processing": "processing",
-                "failed": "error",
-            }
+        current_status = _get_job_status(job.status)
 
+        if current_status != "done":
             return Response(
                 {
                     "job_id": str(job.id),
                     "job_type": job_kind,
-                    "status": status_map.get(
-                        job.status,
-                        job.status,
-                    ),
+                    "status": current_status,
                     "result": None,
                 },
                 status=status.HTTP_200_OK,
@@ -239,21 +228,35 @@ class JobResultView(APIView):
 
         result = {}
 
-        # AIJob may have different result fields depending on the current
-        # model implementation. Only expose fields that actually exist.
-        for field_name in (
+        result_fields = (
             "video_url",
             "image_url",
             "image_nobg",
             "caption",
             "result",
             "output",
-        ):
-            if hasattr(job, field_name):
-                value = getattr(job, field_name)
+        )
 
-                if value not in (None, ""):
-                    result[field_name] = value
+        for field_name in result_fields:
+            if not hasattr(job, field_name):
+                continue
+
+            value = getattr(job, field_name)
+
+            if value in (None, ""):
+                continue
+
+            if field_name in {
+                "video_url",
+                "image_url",
+                "image_nobg",
+            }:
+                value = _serialize_file_value(
+                    value,
+                    request,
+                )
+
+            result[field_name] = value
 
         return Response(
             {
@@ -266,74 +269,114 @@ class JobResultView(APIView):
         )
 
 
-# ---------------------------------------------------------------------------
-# Recent Campaigns
-# ---------------------------------------------------------------------------
+# ============================================================================
+# RECENT CAMPAIGNS
+# ============================================================================
 
 class RecentCampaignsView(APIView):
     """
-    Return recent AI jobs for the authenticated user.
+    Return recent campaigns for the authenticated user.
 
-    This endpoint is intentionally defensive so it continues to work even
-    if the model does not contain every optional field.
+    IMPORTANT:
+    This endpoint intentionally returns the campaigns ARRAY directly.
+
+    The frontend currently expects:
+
+        recentCampaigns.slice(...)
+
+    Therefore the response must be:
+
+        [
+            {...},
+            {...}
+        ]
+
+    and NOT:
+
+        {
+            "campaigns": [...],
+            "count": 1
+        }
+
+    Changing the response to an object causes:
+        TypeError: ec.slice is not a function
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        limit = request.query_params.get("limit", "10")
+        limit_param = request.query_params.get("limit", "10")
 
         try:
-            limit = int(limit)
+            limit = int(limit_param)
         except (TypeError, ValueError):
             limit = 10
 
+        # Protect the endpoint from unreasonable values.
         limit = max(1, min(limit, 50))
 
         queryset = AIJob.objects.filter(
             user=request.user
         )
 
-        if hasattr(AIJob, "_meta"):
-            field_names = {
-                field.name
-                for field in AIJob._meta.get_fields()
-            }
+        # Determine the available timestamp field without assuming
+        # a specific model implementation.
+        field_names = {
+            field.name
+            for field in AIJob._meta.get_fields()
+        }
 
-            if "created_at" in field_names:
-                queryset = queryset.order_by("-created_at")
-            elif "created" in field_names:
-                queryset = queryset.order_by("-created")
-            elif "updated_at" in field_names:
-                queryset = queryset.order_by("-updated_at")
-            elif "updated" in field_names:
-                queryset = queryset.order_by("-updated")
+        if "created_at" in field_names:
+            queryset = queryset.order_by("-created_at")
+
+        elif "created" in field_names:
+            queryset = queryset.order_by("-created")
+
+        elif "updated_at" in field_names:
+            queryset = queryset.order_by("-updated_at")
+
+        elif "updated" in field_names:
+            queryset = queryset.order_by("-updated")
 
         jobs = queryset[:limit]
 
         campaigns = []
 
         for job in jobs:
-            item = {
+            campaign = {
                 "job_id": str(job.id),
-                "status": getattr(job, "status", "pending"),
+                "status": _get_job_status(
+                    getattr(job, "status", "pending")
+                ),
             }
 
+            # Optional campaign fields.
             for field_name in (
                 "stage",
-                "video_url",
-                "image_url",
                 "caption",
                 "error",
             ):
                 if hasattr(job, field_name):
                     value = getattr(job, field_name)
 
-                    if hasattr(value, "url"):
-                        value = value.url
+                    if value is not None:
+                        campaign[field_name] = value
 
-                    item[field_name] = value or ""
+            # File/image/video fields.
+            for field_name in (
+                "video_url",
+                "image_url",
+                "image_nobg",
+            ):
+                if hasattr(job, field_name):
+                    value = getattr(job, field_name)
 
+                    campaign[field_name] = _serialize_file_value(
+                        value,
+                        request,
+                    )
+
+            # Timestamp fields.
             for field_name in (
                 "created_at",
                 "created",
@@ -344,22 +387,27 @@ class RecentCampaignsView(APIView):
                     value = getattr(job, field_name)
 
                     if value is not None:
-                        item[field_name] = value.isoformat()
+                        campaign[field_name] = value.isoformat()
 
-            campaigns.append(item)
+            campaigns.append(campaign)
 
+        # IMPORTANT:
+        # Return the ARRAY directly.
+        #
+        # Frontend expects:
+        # recentCampaigns.slice(...)
+        #
+        # Do NOT return:
+        # {"campaigns": campaigns, "count": len(campaigns)}
         return Response(
-            {
-                "campaigns": campaigns,
-                "count": len(campaigns),
-            },
+            campaigns,
             status=status.HTTP_200_OK,
         )
 
 
-# ---------------------------------------------------------------------------
-# Asset Upload
-# ---------------------------------------------------------------------------
+# ============================================================================
+# ASSET UPLOAD
+# ============================================================================
 
 @csrf_exempt
 @require_POST
@@ -372,47 +420,66 @@ def upload_asset(request):
             status=400,
         )
 
-    ext = os.path.splitext(file.name)[1].lower()
+    extension = os.path.splitext(file.name)[1].lower()
 
-    filename = f"uploads/{uuid.uuid4().hex}{ext}"
-
-    saved_path = default_storage.save(
-        filename,
-        file,
+    filename = (
+        f"uploads/{uuid.uuid4().hex}{extension}"
     )
 
-    raw_url = default_storage.url(saved_path)
+    try:
+        saved_path = default_storage.save(
+            filename,
+            file,
+        )
+
+        raw_url = default_storage.url(
+            saved_path
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to save uploaded asset"
+        )
+
+        return JsonResponse(
+            {"error": "Failed to save file."},
+            status=500,
+        )
 
     if raw_url.startswith(("http://", "https://")):
         file_url = raw_url
     else:
-        file_url = request.build_absolute_uri(raw_url)
+        file_url = request.build_absolute_uri(
+            raw_url
+        )
 
     return JsonResponse(
         {
             "url": file_url,
-        }
+        },
+        status=200,
     )
 
 
-# ---------------------------------------------------------------------------
-# Video Render Dispatch
-# ---------------------------------------------------------------------------
+# ============================================================================
+# VIDEO RENDER DISPATCH
+# ============================================================================
 
 @csrf_exempt
 @require_POST
 def render_video_view(request):
     """
-    One-off editor-preview export.
+    Dispatch an editor-preview video render.
 
-    Dispatches the render job and immediately returns a job ID that the
-    frontend can poll through JobStatusView.
+    The request returns immediately with a PreviewRenderJob ID.
+    The frontend polls JobStatusView for completion.
     """
 
     try:
         payload = json.loads(
             request.body.decode("utf-8")
         )
+
     except (json.JSONDecodeError, UnicodeDecodeError):
         return JsonResponse(
             {"error": "Invalid JSON body."},
@@ -425,14 +492,18 @@ def render_video_view(request):
             status=400,
         )
 
-    format_name = payload.get("format", "ig")
+    format_name = payload.get(
+        "format",
+        "ig",
+    )
 
     if format_name not in SOCIAL_FORMATS:
         return JsonResponse(
             {
                 "error": (
                     f"Unknown format '{format_name}'. "
-                    f"Available: {list(SOCIAL_FORMATS.keys())}"
+                    f"Available: "
+                    f"{list(SOCIAL_FORMATS.keys())}"
                 )
             },
             status=400,
@@ -442,6 +513,7 @@ def render_video_view(request):
         props = normalize_promo_props(
             payload.get("props")
         )
+
     except Exception:
         logger.exception(
             "Failed to normalize render props"
@@ -463,6 +535,7 @@ def render_video_view(request):
             props=props,
             format_name=format_name,
         )
+
     except Exception as exc:
         logger.exception(
             "Render dispatch failed for preview job %s",
@@ -471,18 +544,15 @@ def render_video_view(request):
 
         job.status = "failed"
 
+        update_fields = ["status"]
+
         if hasattr(job, "error"):
             job.error = str(exc)
-            job.save(
-                update_fields=[
-                    "status",
-                    "error",
-                ]
-            )
-        else:
-            job.save(
-                update_fields=["status"]
-            )
+            update_fields.append("error")
+
+        job.save(
+            update_fields=update_fields
+        )
 
         return JsonResponse(
             {
@@ -501,9 +571,9 @@ def render_video_view(request):
     )
 
 
-# ---------------------------------------------------------------------------
-# Video Render Callback
-# ---------------------------------------------------------------------------
+# ============================================================================
+# VIDEO RENDER CALLBACK
+# ============================================================================
 
 @csrf_exempt
 @require_POST
@@ -519,9 +589,12 @@ def video_render_complete(request):
         "",
     )
 
-    if not expected_secret or not hmac.compare_digest(
-        provided_secret,
-        expected_secret,
+    if (
+        not expected_secret
+        or not hmac.compare_digest(
+            provided_secret,
+            expected_secret,
+        )
     ):
         logger.warning(
             "Unauthorized render callback received"
@@ -536,6 +609,7 @@ def video_render_complete(request):
         data = json.loads(
             request.body.decode("utf-8")
         )
+
     except (json.JSONDecodeError, UnicodeDecodeError):
         return JsonResponse(
             {"error": "bad request"},
@@ -554,7 +628,9 @@ def video_render_complete(request):
     if not job_id or not render_status:
         return JsonResponse(
             {
-                "error": "job_id and status are required"
+                "error": (
+                    "job_id and status are required"
+                )
             },
             status=400,
         )
@@ -563,7 +639,8 @@ def video_render_complete(request):
 
     if job is None:
         logger.warning(
-            "video_render_complete: no job found for id=%s",
+            "video_render_complete: "
+            "no job found for id=%s",
             job_id,
         )
 
@@ -572,37 +649,47 @@ def video_render_complete(request):
             status=404,
         )
 
+    # ------------------------------------------------------------------------
+    # AIJob
+    # ------------------------------------------------------------------------
+
     if job_kind == "aijob":
         try:
             apply_render_result(
                 job,
-                success=(render_status == "success"),
-                video_url=data.get("video_url", ""),
-                error=data.get("error", ""),
+                success=(
+                    render_status == "success"
+                ),
+                video_url=data.get(
+                    "video_url",
+                    "",
+                ),
+                error=data.get(
+                    "error",
+                    "",
+                ),
             )
 
         except requests.RequestException as exc:
             logger.exception(
-                "Failed to fetch rendered video for job %s",
+                "Failed to fetch rendered video "
+                "for job %s",
                 job_id,
             )
 
             job.status = "failed"
 
-            if hasattr(job, "stage"):
-                job.stage = "video_render_failed"
-
-            if hasattr(job, "error"):
-                job.error = (
-                    f"Failed to fetch rendered video: {exc}"
-                )
-
             update_fields = ["status"]
 
             if hasattr(job, "stage"):
+                job.stage = "video_render_failed"
                 update_fields.append("stage")
 
             if hasattr(job, "error"):
+                job.error = (
+                    "Failed to fetch rendered "
+                    f"video: {exc}"
+                )
                 update_fields.append("error")
 
             job.save(
@@ -616,14 +703,24 @@ def video_render_complete(request):
 
         except Exception:
             logger.exception(
-                "Failed to apply render result for job %s",
+                "Failed to apply render result "
+                "for job %s",
                 job_id,
             )
 
             return JsonResponse(
-                {"error": "failed to apply render result"},
+                {
+                    "error": (
+                        "failed to apply "
+                        "render result"
+                    )
+                },
                 status=500,
             )
+
+    # ------------------------------------------------------------------------
+    # PreviewRenderJob
+    # ------------------------------------------------------------------------
 
     else:
         job.status = (
@@ -635,7 +732,10 @@ def video_render_complete(request):
         update_fields = ["status"]
 
         if hasattr(job, "error"):
-            job.error = data.get("error", "")
+            job.error = data.get(
+                "error",
+                "",
+            )
             update_fields.append("error")
 
         if hasattr(job, "video_url"):
@@ -650,5 +750,6 @@ def video_render_complete(request):
         )
 
     return JsonResponse(
-        {"ok": True}
+        {"ok": True},
+        status=200,
     )
