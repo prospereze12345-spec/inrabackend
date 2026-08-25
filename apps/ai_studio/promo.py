@@ -246,3 +246,32 @@ def apply_render_result(job, *, success: bool, video_url: str = "", error: str =
     job.save(update_fields=["video", "status", "stage", "error"])
 
     _track_usage(job)
+
+
+def apply_preview_render_result(job, *, success: bool, video_url: str = "", error: str = "") -> None:
+    """
+    Applies the GitHub Actions callback result to a PreviewRenderJob
+    (one-off editor exports). Unlike apply_render_result (used for AIJob),
+    this does NOT download/store the video locally — the Cloudinary URL
+    from the GitHub Action is the source of truth, and there's no
+    usage tracking or FileField involved for previews.
+    """
+    if not success:
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = error or "GitHub Actions render failed"
+        job.save(update_fields=["status", "stage", "error"])
+        return
+
+    if not video_url:
+        job.status = "failed"
+        job.stage = "video_render_failed"
+        job.error = "Render reported success but no video_url was provided"
+        job.save(update_fields=["status", "stage", "error"])
+        return
+
+    job.status = "success"
+    job.stage = "completed"
+    job.video_url = video_url
+    job.error = ""
+    job.save(update_fields=["status", "stage", "video_url", "error"])

@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.http import require_POST
 from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import AIJob, PreviewRenderJob
-from .promo import apply_render_result, dispatch_preview_render
+from .promo import apply_render_result, apply_preview_render_result, dispatch_preview_render
 from .services.qstash_client import enqueue_ai_job
 from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
 
@@ -233,7 +233,6 @@ def render_video_view(request):
 
     return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
 
-
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
@@ -244,29 +243,21 @@ def video_render_complete(request):
     try:
         data = json.loads(request.body)
         job_id = data["job_id"]
-        render_status = data["status"]  # renamed from `status` — was shadowing the DRF import
+        render_status = data["status"]
     except (KeyError, ValueError):
         return JsonResponse({"error": "bad request"}, status=400)
 
-    # video_render_complete
     try:
         job = PreviewRenderJob.objects.get(id=job_id)
     except PreviewRenderJob.DoesNotExist:
         logger.warning("video_render_complete: no PreviewRenderJob with id=%s", job_id)
         return JsonResponse({"error": "job not found"}, status=404)
-    try:
-        apply_render_result(
-            job,
-            success=(render_status == "success"),
-            video_url=data.get("video_url", ""),
-            error=data.get("error", ""),
-        )
-    except requests.RequestException as e:
-        logger.error("Failed to fetch rendered video for job %s: %s", job_id, e)
-        job.status = "failed"
-        job.stage = "video_render_failed"
-        job.error = f"Failed to fetch rendered video: {e}"
-        job.save(update_fields=["status", "stage", "error"])
-        return JsonResponse({"error": "fetch failed"}, status=502)
+
+    apply_preview_render_result(
+        job,
+        success=(render_status == "success"),
+        video_url=data.get("video_url", ""),
+        error=data.get("error", ""),
+    )
 
     return JsonResponse({"ok": True})
