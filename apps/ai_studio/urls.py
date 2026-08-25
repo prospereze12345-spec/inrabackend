@@ -8,11 +8,13 @@ from .views import (
     RecentCampaignsView,
     upload_asset,
     render_video_view,
-    video_render_complete,   # <-- add this
+    video_render_complete,
+    render_video_status   # <-- add this
 )
 
 urlpatterns = [
-    path("render-video/", render_video_view, name="render-video"),
+    path("render-video/<uuid:job_id>/", render_video_status, name="render-video-status"),
+    path("render-video/", render_video_view, name="render-video-create"),
     path("generate/", CreateAIJobView.as_view(), name="generate"),
     path("recent/", RecentCampaignsView.as_view(), name="recent-campaigns"),
     path("qstash/webhook/", webhooks.qstash_webhook, name="qstash-webhook"),

@@ -9,8 +9,8 @@ from django.conf import settings
 from django.core.files.storage import default_storage
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
-
+from django.views.decorators.http import require_POST, require_GET
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -181,6 +181,25 @@ def upload_asset(request):
     return JsonResponse({"url": file_url})
 
     
+
+
+from django.views.decorators.http import require_GET
+
+@require_GET
+def render_video_status(request, job_id):
+    try:
+        job = PreviewRenderJob.objects.get(id=job_id)
+    except (PreviewRenderJob.DoesNotExist, ValueError, ValidationError):
+        return JsonResponse({"error": "job not found"}, status=404)
+
+    return JsonResponse({
+        "job_id": str(job.id),
+        "status": job.status,          # "processing" | "success" | "failed"
+        "video_url": job.video_url or "",
+        "error": job.error or "",
+    })
+
+
 @csrf_exempt
 @require_POST
 def render_video_view(request):

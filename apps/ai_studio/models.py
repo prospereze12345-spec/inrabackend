@@ -79,5 +79,6 @@ class PreviewRenderJob(models.Model):
         blank=True,
         storage=VideoMediaCloudinaryStorage(),
     )
+    video_url = models.URLField(blank=True, default="")
     error = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
