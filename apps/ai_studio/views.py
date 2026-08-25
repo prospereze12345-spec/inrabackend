@@ -229,12 +229,12 @@ def video_render_complete(request):
     except (KeyError, ValueError):
         return JsonResponse({"error": "bad request"}, status=400)
 
+    # video_render_complete
     try:
-        job = AIJob.objects.get(id=job_id)
-    except AIJob.DoesNotExist:
-        logger.warning("video_render_complete: no AIJob with id=%s", job_id)
+        job = PreviewRenderJob.objects.get(id=job_id)
+    except PreviewRenderJob.DoesNotExist:
+        logger.warning("video_render_complete: no PreviewRenderJob with id=%s", job_id)
         return JsonResponse({"error": "job not found"}, status=404)
-
     try:
         apply_render_result(
             job,
