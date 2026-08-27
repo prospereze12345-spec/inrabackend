@@ -110,3 +110,95 @@ class MeView(APIView):
 
     def get(self, request):
         return Response(UserProfileSerializer(request.user).data)
+from django.core.mail import EmailMessage
+from django.conf import settings
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework import status
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def contact_message(request):
+    name = str(request.data.get("name", "")).strip()
+    email = str(request.data.get("email", "")).strip()
+    subject = str(request.data.get("subject", "")).strip()
+    message = str(request.data.get("message", "")).strip()
+
+    # ---------------------------------------------------------
+    # VALIDATION
+    # ---------------------------------------------------------
+
+    if not name or not email or not message:
+        return Response(
+            {
+                "success": False,
+                "message": "Name, email and message are required.",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if "@" not in email or "." not in email.split("@")[-1]:
+        return Response(
+            {
+                "success": False,
+                "message": "Please provide a valid email address.",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not subject:
+        subject = f"New INRASTUDIO contact message from {name}"
+
+    # ---------------------------------------------------------
+    # EMAIL CONTENT
+    # ---------------------------------------------------------
+
+    email_body = f"""You have received a new message from the INRASTUDIO contact form.
+
+Name: {name}
+Email: {email}
+Subject: {subject}
+
+Message:
+{message}
+
+--------------------------------
+Sent from the INRASTUDIO contact page.
+"""
+
+    try:
+        email_message = EmailMessage(
+            subject=subject,
+            body=email_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[
+                "prospereze12345@gmail.com",
+            ],
+            reply_to=[
+                email,
+            ],
+        )
+
+        email_message.send(fail_silently=False)
+
+        return Response(
+            {
+                "success": True,
+                "message": "Your message has been sent successfully.",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except Exception as e:
+        print("CONTACT EMAIL ERROR:", str(e))
+
+        return Response(
+            {
+                "success": False,
+                "message": "Unable to send your message right now. Please try again later.",
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
