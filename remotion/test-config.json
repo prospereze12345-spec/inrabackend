@@ -16,7 +16,7 @@
     "brandName": "Glow Beauty",
     "website": "glowbeauty.com",
 
-    "productImage": "/media/products/cosmetics.jpg",
+    "productImage": "/media/uploads/cosmetic.jpg",
 
     "features": [
       "Premium ingredients",
@@ -32,7 +32,6 @@
 
     "featuresVisible": true,
     "whyChooseUsVisible": true,
-
     "ctaVisible": true,
 
     "phone": "08012345678",
