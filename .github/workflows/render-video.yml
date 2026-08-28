@@ -8,11 +8,19 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
+      # ================================================================
+      # CHECKOUT
+      # ================================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ================================================================
+      # NODE
+      # ================================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -21,17 +29,71 @@ jobs:
           cache: "npm"
           cache-dependency-path: remotion/package-lock.json
 
+      # ================================================================
+      # INSTALL DEPENDENCIES
+      # ================================================================
+
       - name: Install dependencies
         working-directory: remotion
         run: npm ci
 
-      - name: Cache Chrome for Remotion
+      # ================================================================
+      # REMOTION / CHROMIUM CACHE
+      # ================================================================
+
+      - name: Cache Remotion browser
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/puppeteer
+            ~/.cache/remotion
             remotion/node_modules/.cache
-          key: remotion-chrome-${{ runner.os }}-${{ hashFiles('remotion/package-lock.json') }}
+          key: remotion-browser-${{ runner.os }}-${{ hashFiles('remotion/package-lock.json') }}
+          restore-keys: |
+            remotion-browser-${{ runner.os }}-
+
+      # ================================================================
+      # BROWSER SETUP
+      # ================================================================
+
+      - name: Ensure Chromium is available
+        working-directory: remotion
+        run: |
+          npx remotion browser ensure
+
+      # ================================================================
+      # RENDER ENVIRONMENT
+      # ================================================================
+
+      - name: Check render environment
+        working-directory: remotion
+        run: |
+          echo "Node:"
+          node --version
+
+          echo ""
+          echo "npm:"
+          npm --version
+
+          echo ""
+          echo "Remotion:"
+          npx remotion versions
+
+          echo ""
+          echo "Available memory:"
+          free -h
+
+          echo ""
+          echo "CPU:"
+          nproc
+
+          echo ""
+          echo "Disk:"
+          df -h
+
+      # ================================================================
+      # WRITE CONFIG
+      # ================================================================
 
       - name: Write render config
         env:
@@ -39,19 +101,36 @@ jobs:
         run: |
           printf '%s' "$RENDER_CONFIG" > /tmp/config.json
 
+      # ================================================================
+      # VALIDATE CONFIG
+      # ================================================================
+
       - name: Validate render config
         run: |
           echo "Render configuration:"
           cat /tmp/config.json
+
           echo ""
           echo "Validating JSON..."
+
           jq empty /tmp/config.json
+
           echo "JSON is valid."
+
+      # ================================================================
+      # RENDER
+      # ================================================================
 
       - name: Render video
         working-directory: remotion
         run: |
-          node render.mjs --config /tmp/config.json --verbose
+          node render.mjs \
+            --config /tmp/config.json \
+            --verbose
+
+      # ================================================================
+      # VERIFY OUTPUT
+      # ================================================================
 
       - name: Verify rendered video
         working-directory: remotion
@@ -65,8 +144,25 @@ jobs:
             exit 1
           fi
 
+          echo ""
           echo "Rendered video found:"
           ls -lh "${OUTPUT_PATH}"
+
+          echo ""
+          echo "Video information:"
+
+          if command -v ffprobe >/dev/null 2>&1; then
+            ffprobe \
+              -v error \
+              -show_entries \
+              format=duration,size \
+              -of default=noprint_wrappers=1 \
+              "${OUTPUT_PATH}"
+          fi
+
+      # ================================================================
+      # CLOUDINARY
+      # ================================================================
 
       - name: Upload to Cloudinary
         id: upload
@@ -106,12 +202,17 @@ jobs:
 
           echo "Cloudinary cloud name: ${CLOUD_NAME}"
           echo "Output file: ${OUTPUT_PATH}"
+
+          echo ""
           echo "File size:"
           ls -lh "${OUTPUT_PATH}"
 
+          echo ""
           echo "Uploading video..."
 
-          curl --fail-with-body --silent --show-error \
+          curl --fail-with-body \
+            --silent \
+            --show-error \
             --request POST \
             --url "${CLOUDINARY_URL}" \
             --form "file=@${OUTPUT_PATH}" \
@@ -119,20 +220,29 @@ jobs:
             --form "upload_preset=${UPLOAD_PRESET}" \
             --output /tmp/cloudinary_response.json
 
+          echo ""
           echo "Cloudinary response:"
           cat /tmp/cloudinary_response.json
 
-          VIDEO_URL=$(jq -r '.secure_url // empty' /tmp/cloudinary_response.json)
+          VIDEO_URL=$(
+            jq -r '.secure_url // empty' \
+            /tmp/cloudinary_response.json
+          )
 
           if [ -z "${VIDEO_URL}" ]; then
             echo "ERROR: Cloudinary did not return secure_url."
             exit 1
           fi
 
+          echo ""
           echo "Video uploaded successfully:"
           echo "${VIDEO_URL}"
 
           echo "video_url=${VIDEO_URL}" >> "${GITHUB_OUTPUT}"
+
+      # ================================================================
+      # DJANGO SUCCESS CALLBACK
+      # ================================================================
 
       - name: Notify Django - success
         if: success()
@@ -144,7 +254,13 @@ jobs:
         run: |
           echo "Notifying Django of successful render..."
 
-          curl --fail-with-body -sS \
+          if [ -z "${CALLBACK_URL:-}" ]; then
+            echo "ERROR: DJANGO_CALLBACK_URL secret is empty."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            -sS \
             -X POST \
             "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
@@ -160,6 +276,10 @@ jobs:
               }'
             )"
 
+      # ================================================================
+      # DJANGO FAILURE CALLBACK
+      # ================================================================
+
       - name: Notify Django - failure
         if: failure()
         env:
@@ -169,7 +289,13 @@ jobs:
         run: |
           echo "Notifying Django that video rendering failed..."
 
-          curl --fail-with-body -sS \
+          if [ -z "${CALLBACK_URL:-}" ]; then
+            echo "ERROR: DJANGO_CALLBACK_URL secret is empty."
+            exit 1
+          fi
+
+          curl --fail-with-body \
+            -sS \
             -X POST \
             "${CALLBACK_URL}" \
             -H "Content-Type: application/json" \
