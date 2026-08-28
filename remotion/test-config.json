@@ -1,64 +1,66 @@
 {
-  "jobId": "abc123",
-  "compositionId": "PromoVideo",
-  "width": 1080,
-  "height": 1350,
-  "fps": 30,
-  "outputPath": "out/abc123.mp4",
-  "concurrency": 2,
-  "x264Preset": "fast",
-  "mediaOrigin": "https://inrabackend-docker.onrender.com",
-  "inputProps": {
-    "headline": "Glow That Gets Noticed",
-    "subtext": "Premium cosmetics designed to elevate your everyday beauty routine.",
-    "ctaText": "DM to order now",
-    "price": "From ₦8,500",
-    "brandName": "Glow Beauty",
-    "website": "glowbeauty.com",
+"jobId": "abc123",
+"compositionId": "PromoVideo",
+"width": 1080,
+"height": 1350,
+"fps": 30,
+"outputPath": "out/abc123.mp4",
+"concurrency": 2,
+"x264Preset": "fast",
+"mediaOrigin": "https://inrabackend-docker.onrender.com",
+"inputProps": {
+"headline": "Glow That Gets Noticed",
+"subtext": "Premium cosmetics designed to elevate your everyday beauty routine.",
+"ctaText": "DM to order now",
+"price": "From ₦8,500",
+"brandName": "Glow Beauty",
+"website": "glowbeauty.com",
 
-    "productImage": "/media/uploads/cosmetic.jpg",
 
-    "features": [
-      "Premium ingredients",
-      "Long-lasting finish",
-      "Suitable for everyday use"
-    ],
+"productImage": "/media/uploads/bag.jpg",
 
-    "whyChooseUs": [
-      "Fast delivery",
-      "Quality guaranteed",
-      "Easy ordering"
-    ],
+"features": [
+  "Premium ingredients",
+  "Long-lasting finish",
+  "Suitable for everyday use"
+],
 
-    "featuresVisible": true,
-    "whyChooseUsVisible": true,
-    "ctaVisible": true,
+"whyChooseUs": [
+  "Fast delivery",
+  "Quality guaranteed",
+  "Easy ordering"
+],
 
-    "phone": "08012345678",
-    "email": "hello@glowbeauty.com",
+"featuresVisible": true,
+"whyChooseUsVisible": true,
+"ctaVisible": true,
 
-    "phoneVisible": true,
-    "emailVisible": true,
-    "websiteVisible": true,
+"phone": "08012345678",
+"email": "hello@glowbeauty.com",
 
-    "logoImage": "",
+"phoneVisible": true,
+"emailVisible": true,
+"websiteVisible": true,
 
-    "badge": {
-      "visible": true,
-      "text": "20%",
-      "subText": "OFF",
-      "textColor": "#ffffff",
-      "bgColor": "#d946ef",
-      "transform": {
-        "x": 82,
-        "y": 24,
-        "scale": 1
-      }
-    },
+"logoImage": "",
 
-    "voiceoverVoice": "en-US-AriaNeural",
-
-    "musicUrl": "",
-    "musicVolume": 0.12
+"badge": {
+  "visible": true,
+  "text": "20%",
+  "subText": "OFF",
+  "textColor": "#ffffff",
+  "bgColor": "#d946ef",
+  "transform": {
+    "x": 82,
+    "y": 24,
+    "scale": 1
   }
+},
+
+"voiceoverVoice": "en-US-AriaNeural",
+
+"musicUrl": "",
+"musicVolume": 0.12
+
+}
 }
