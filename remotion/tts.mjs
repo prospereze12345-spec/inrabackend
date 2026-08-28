@@ -25,13 +25,26 @@ function cleanString(value) {
 }
 
 function ensureOutputDirectory(outputPath) {
-  const directory = path.dirname(
-    path.resolve(outputPath)
-  );
+  const directory = path.dirname(path.resolve(outputPath));
 
   fs.mkdirSync(directory, {
     recursive: true,
   });
+}
+
+// ============================================================================
+// PYTHON COMMAND
+// ============================================================================
+
+function getPythonCommand() {
+  /*
+   * GitHub Ubuntu normally provides `python3`.
+   * Windows local development normally provides `python`.
+   */
+
+  return process.platform === "win32"
+    ? "python"
+    : "python3";
 }
 
 // ============================================================================
@@ -46,6 +59,7 @@ export async function generateVoiceover({
   const narration = cleanString(text);
   const resolvedVoice =
     cleanString(voice) || DEFAULT_VOICE;
+
   const resolvedOutputPath =
     path.resolve(outputPath);
 
@@ -55,15 +69,13 @@ export async function generateVoiceover({
     );
   }
 
-  if (!resolvedOutputPath) {
+  if (!outputPath) {
     throw new Error(
       "Cannot generate voiceover: outputPath is missing."
     );
   }
 
-  ensureOutputDirectory(
-    resolvedOutputPath
-  );
+  ensureOutputDirectory(resolvedOutputPath);
 
   console.log(
     `[tts] Generating voiceover with ${resolvedVoice}...`
@@ -73,23 +85,24 @@ export async function generateVoiceover({
     `[tts] Output: ${resolvedOutputPath}`
   );
 
+  const python = getPythonCommand();
+
   /*
-   * edge-tts provides a CLI executable.
+   * edge-tts is installed in the GitHub Actions environment.
    *
-   * We use:
+   * Using:
    *
-   *   edge-tts
-   *     --voice <voice>
-   *     --text <text>
-   *     --write-media <output>
+   *   python -m edge_tts
+   *
+   * is more reliable than relying on an npm executable.
    */
 
   try {
     await execFileAsync(
-      "npx",
+      python,
       [
-        "--yes",
-        "edge-tts",
+        "-m",
+        "edge_tts",
         "--voice",
         resolvedVoice,
         "--text",
@@ -103,15 +116,13 @@ export async function generateVoiceover({
       }
     );
   } catch (error) {
-    const stdout =
-      error?.stdout || "";
-
-    const stderr =
-      error?.stderr || "";
+    const stdout = error?.stdout || "";
+    const stderr = error?.stderr || "";
 
     throw new Error(
       [
         "Edge TTS generation failed.",
+        `Python command: ${python}`,
         stdout
           ? `stdout: ${stdout}`
           : "",
@@ -131,20 +142,13 @@ export async function generateVoiceover({
   // VALIDATE OUTPUT
   // ========================================================================
 
-  if (
-    !fs.existsSync(
-      resolvedOutputPath
-    )
-  ) {
+  if (!fs.existsSync(resolvedOutputPath)) {
     throw new Error(
       `Edge TTS completed but no audio file was created: ${resolvedOutputPath}`
     );
   }
 
-  const stats =
-    fs.statSync(
-      resolvedOutputPath
-    );
+  const stats = fs.statSync(resolvedOutputPath);
 
   if (stats.size < 1_000) {
     throw new Error(
