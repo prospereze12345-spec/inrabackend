@@ -1,4 +1,3 @@
-
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -6,15 +5,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-// ============================================================================
-// DEFAULT VOICE
-// ============================================================================
-
 export const DEFAULT_VOICE = "en-US-AriaNeural";
-
-// ============================================================================
-// HELPERS
-// ============================================================================
 
 function cleanString(value) {
   if (value === undefined || value === null) {
@@ -25,31 +16,24 @@ function cleanString(value) {
 }
 
 function ensureOutputDirectory(outputPath) {
-  const directory = path.dirname(path.resolve(outputPath));
+  const directory = path.dirname(
+    path.resolve(outputPath)
+  );
 
   fs.mkdirSync(directory, {
     recursive: true,
   });
 }
 
-// ============================================================================
-// PYTHON COMMAND
-// ============================================================================
-
 function getPythonCommand() {
-  /*
-   * GitHub Ubuntu normally provides `python3`.
-   * Windows local development normally provides `python`.
-   */
+  if (process.env.PYTHON_COMMAND) {
+    return process.env.PYTHON_COMMAND;
+  }
 
   return process.platform === "win32"
     ? "python"
     : "python3";
 }
-
-// ============================================================================
-// GENERATE VOICEOVER
-// ============================================================================
 
 export async function generateVoiceover({
   text,
@@ -75,7 +59,9 @@ export async function generateVoiceover({
     );
   }
 
-  ensureOutputDirectory(resolvedOutputPath);
+  ensureOutputDirectory(
+    resolvedOutputPath
+  );
 
   console.log(
     `[tts] Generating voiceover with ${resolvedVoice}...`
@@ -85,21 +71,16 @@ export async function generateVoiceover({
     `[tts] Output: ${resolvedOutputPath}`
   );
 
-  const python = getPythonCommand();
+  const pythonCommand =
+    getPythonCommand();
 
-  /*
-   * edge-tts is installed in the GitHub Actions environment.
-   *
-   * Using:
-   *
-   *   python -m edge_tts
-   *
-   * is more reliable than relying on an npm executable.
-   */
+  console.log(
+    `[tts] Python command: ${pythonCommand}`
+  );
 
   try {
     await execFileAsync(
-      python,
+      pythonCommand,
       [
         "-m",
         "edge_tts",
@@ -116,13 +97,16 @@ export async function generateVoiceover({
       }
     );
   } catch (error) {
-    const stdout = error?.stdout || "";
-    const stderr = error?.stderr || "";
+    const stdout =
+      error?.stdout || "";
+
+    const stderr =
+      error?.stderr || "";
 
     throw new Error(
       [
         "Edge TTS generation failed.",
-        `Python command: ${python}`,
+        `Python command: ${pythonCommand}`,
         stdout
           ? `stdout: ${stdout}`
           : "",
@@ -138,19 +122,22 @@ export async function generateVoiceover({
     );
   }
 
-  // ========================================================================
-  // VALIDATE OUTPUT
-  // ========================================================================
-
-  if (!fs.existsSync(resolvedOutputPath)) {
+  if (
+    !fs.existsSync(
+      resolvedOutputPath
+    )
+  ) {
     throw new Error(
       `Edge TTS completed but no audio file was created: ${resolvedOutputPath}`
     );
   }
 
-  const stats = fs.statSync(resolvedOutputPath);
+  const stats =
+    fs.statSync(
+      resolvedOutputPath
+    );
 
-  if (stats.size < 1_000) {
+  if (stats.size < 1000) {
     throw new Error(
       `Generated voiceover appears invalid. File size: ${stats.size} bytes`
     );

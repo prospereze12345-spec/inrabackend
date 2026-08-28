@@ -1,0 +1,65 @@
+{
+  "jobId": "abc123",
+  "compositionId": "PromoVideo",
+  "width": 1080,
+  "height": 1350,
+  "fps": 30,
+  "outputPath": "out/abc123.mp4",
+  "concurrency": 2,
+  "x264Preset": "fast",
+  "mediaOrigin": "https://inrabackend-docker.onrender.com",
+  "inputProps": {
+    "headline": "Glow That Gets Noticed",
+    "subtext": "Premium cosmetics designed to elevate your everyday beauty routine.",
+    "ctaText": "DM to order now",
+    "price": "From ₦8,500",
+    "brandName": "Glow Beauty",
+    "website": "glowbeauty.com",
+
+    "productImage": "/media/products/cosmetics.jpg",
+
+    "features": [
+      "Premium ingredients",
+      "Long-lasting finish",
+      "Suitable for everyday use"
+    ],
+
+    "whyChooseUs": [
+      "Fast delivery",
+      "Quality guaranteed",
+      "Easy ordering"
+    ],
+
+    "featuresVisible": true,
+    "whyChooseUsVisible": true,
+
+    "ctaVisible": true,
+
+    "phone": "08012345678",
+    "email": "hello@glowbeauty.com",
+
+    "phoneVisible": true,
+    "emailVisible": true,
+    "websiteVisible": true,
+
+    "logoImage": "",
+
+    "badge": {
+      "visible": true,
+      "text": "20%",
+      "subText": "OFF",
+      "textColor": "#ffffff",
+      "bgColor": "#d946ef",
+      "transform": {
+        "x": 82,
+        "y": 24,
+        "scale": 1
+      }
+    },
+
+    "voiceoverVoice": "en-US-AriaNeural",
+
+    "musicUrl": "",
+    "musicVolume": 0.12
+  }
+}
