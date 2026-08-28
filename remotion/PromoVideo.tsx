@@ -1,4 +1,3 @@
-
 import React from "react";
 
 import {
@@ -109,8 +108,17 @@ const DEFAULT_PROPS: PromoVideoProps = {
 
   badge: null,
 
-  features: [],
-  whyChooseUs: [],
+  features: [
+    "Premium quality",
+    "Elegant modern design",
+    "Built to last",
+  ],
+
+  whyChooseUs: [
+    "Trusted quality",
+    "Fast delivery",
+    "Great customer service",
+  ],
 
   featuresVisible: true,
   whyChooseUsVisible: true,
@@ -152,15 +160,17 @@ function resolveAsset(
     return "";
   }
 
-  // Absolute URL
+  // Absolute URLs and browser-generated assets
   if (
     clean.startsWith("http://") ||
-    clean.startsWith("https://")
+    clean.startsWith("https://") ||
+    clean.startsWith("data:") ||
+    clean.startsWith("blob:")
   ) {
     return clean;
   }
 
-  // Remotion generated voice
+  // Remotion public/static assets
   if (
     clean.startsWith("voiceovers/") ||
     clean.startsWith("/voiceovers/")
@@ -168,7 +178,6 @@ function resolveAsset(
     return staticFile(clean.replace(/^\/+/, ""));
   }
 
-  // Remotion music
   if (
     clean.startsWith("music/") ||
     clean.startsWith("/music/")
@@ -176,7 +185,7 @@ function resolveAsset(
     return staticFile(clean.replace(/^\/+/, ""));
   }
 
-  // Django media
+  // Backend media
   if (clean.startsWith("/media/")) {
     return `${mediaOrigin}${clean}`;
   }
@@ -185,12 +194,11 @@ function resolveAsset(
     return `${mediaOrigin}/${clean}`;
   }
 
-  // Unknown relative asset.
   return `${mediaOrigin}/media/${clean.replace(/^\/+/, "")}`;
 }
 
 // ============================================================================
-// SAFE ARRAY
+// HELPERS
 // ============================================================================
 
 function safeArray(value?: string[]): string[] {
@@ -199,14 +207,34 @@ function safeArray(value?: string[]): string[] {
   }
 
   return value
-    .map((item) => String(item).trim())
+    .map((item) => String(item ?? "").trim())
     .filter(Boolean)
     .slice(0, 3);
 }
 
-// ============================================================================
-// ANIMATION HELPERS
-// ============================================================================
+function clampText(
+  value: string,
+  maxLength: number
+): string {
+  const text = String(value || "").trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 1).trim()}…`;
+}
+
+function splitHeadline(
+  text: string,
+  maxWords = 12
+): string[] {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxWords);
+}
 
 function fadeUp(
   frame: number,
@@ -226,7 +254,7 @@ function fadeUp(
   const y = interpolate(
     frame,
     [start, start + duration],
-    [28, 0],
+    [22, 0],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
@@ -239,33 +267,20 @@ function fadeUp(
   };
 }
 
-function scaleIn(
+function springIn(
   frame: number,
-  start: number
-) {
-  const progress = spring({
-    frame: frame - start,
-    fps: 30,
+  start: number,
+  fps: number
+): number {
+  return spring({
+    frame: Math.max(0, frame - start),
+    fps,
     config: {
-      damping: 14,
-      stiffness: 150,
-      mass: 0.6,
+      damping: 16,
+      stiffness: 140,
+      mass: 0.65,
     },
   });
-
-  return {
-    opacity: interpolate(
-      progress,
-      [0, 1],
-      [0, 1]
-    ),
-
-    transform: `scale(${interpolate(
-      progress,
-      [0, 1],
-      [0.82, 1]
-    )})`,
-  };
 }
 
 // ============================================================================
@@ -286,16 +301,17 @@ function SectionTitle({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        marginBottom: 10,
+        gap: 7,
+        marginBottom: 8,
       }}
     >
       <div
         style={{
-          width: 18,
+          width: 16,
           height: 2,
+          borderRadius: 999,
           background: accent,
-          borderRadius: 2,
+          flexShrink: 0,
         }}
       />
 
@@ -303,7 +319,7 @@ function SectionTitle({
         style={{
           fontSize: 10,
           fontWeight: 800,
-          letterSpacing: "0.18em",
+          letterSpacing: "0.16em",
           textTransform: "uppercase",
           color,
           opacity: 0.55,
@@ -326,6 +342,7 @@ function FeatureRow({
   accent,
   textColor,
   width,
+  fps,
 }: {
   text: string;
   index: number;
@@ -333,23 +350,21 @@ function FeatureRow({
   accent: string;
   textColor: string;
   width: number;
+  fps: number;
 }) {
   const frame = useCurrentFrame();
 
-  const delay = start + index * 7;
+  const delay = start + index * 5;
 
-  const progress = spring({
-    frame: frame - delay,
-    fps: 30,
-    config: {
-      damping: 18,
-      stiffness: 150,
-    },
-  });
+  const progress = springIn(
+    frame,
+    delay,
+    fps
+  );
 
   const opacity = interpolate(
     frame,
-    [delay, delay + 14],
+    [delay, delay + 12],
     [0, 1],
     {
       extrapolateLeft: "clamp",
@@ -360,27 +375,27 @@ function FeatureRow({
   const x = interpolate(
     progress,
     [0, 1],
-    [-30, 0]
+    [-18, 0]
   );
 
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: 9,
+        alignItems: "flex-start",
+        gap: 8,
+        marginBottom: 6,
         opacity,
         transform: `translateX(${x}px)`,
-        marginBottom: 6,
       }}
     >
       <div
         style={{
-          width: 7,
-          height: 7,
+          width: 6,
+          height: 6,
+          marginTop: 5,
           borderRadius: "50%",
           background: accent,
-          boxShadow: `0 0 12px ${accent}66`,
           flexShrink: 0,
         }}
       />
@@ -396,7 +411,7 @@ function FeatureRow({
           lineHeight: 1.25,
         }}
       >
-        {text}
+        {clampText(text, 85)}
       </div>
     </div>
   );
@@ -414,6 +429,7 @@ function BenefitCard({
   textColor,
   primary,
   width,
+  fps,
 }: {
   text: string;
   index: number;
@@ -422,23 +438,21 @@ function BenefitCard({
   textColor: string;
   primary: string;
   width: number;
+  fps: number;
 }) {
   const frame = useCurrentFrame();
 
-  const delay = start + index * 7;
+  const delay = start + index * 5;
 
-  const progress = spring({
-    frame: frame - delay,
-    fps: 30,
-    config: {
-      damping: 16,
-      stiffness: 130,
-    },
-  });
+  const progress = springIn(
+    frame,
+    delay,
+    fps
+  );
 
   const opacity = interpolate(
     frame,
-    [delay, delay + 15],
+    [delay, delay + 14],
     [0, 1],
     {
       extrapolateLeft: "clamp",
@@ -449,7 +463,7 @@ function BenefitCard({
   const y = interpolate(
     progress,
     [0, 1],
-    [18, 0]
+    [12, 0]
   );
 
   return (
@@ -458,12 +472,12 @@ function BenefitCard({
         flex: 1,
         minWidth: 0,
         padding: "9px 10px",
-        borderRadius: 10,
+        borderRadius: 9,
         border: `1px solid ${textColor}14`,
         background: `${textColor}07`,
+        boxShadow: `0 7px 20px ${primary}40`,
         opacity,
         transform: `translateY(${y}px)`,
-        boxShadow: `0 10px 30px ${primary}55`,
       }}
     >
       <div
@@ -480,22 +494,22 @@ function BenefitCard({
         style={{
           fontSize: Math.max(
             10,
-            Math.round(width * 0.011)
+            Math.round(width * 0.0105)
           ),
           lineHeight: 1.25,
+          fontWeight: 650,
           color: textColor,
           opacity: 0.82,
-          fontWeight: 650,
         }}
       >
-        {text}
+        {clampText(text, 52)}
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// MAIN PROMO VIDEO
+// PROMO VIDEO
 // ============================================================================
 
 export function PromoVideo({
@@ -544,41 +558,41 @@ export function PromoVideo({
   } = useVideoConfig();
 
   // ==========================================================================
-  // MEDIA
+  // MEDIA ORIGIN
   // ==========================================================================
 
   const MEDIA_ORIGIN = (
     process.env.REMOTION_MEDIA_ORIGIN ||
+    process.env.NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN ||
     "https://inrabackend-docker.onrender.com"
   ).replace(/\/+$/, "");
 
-  const resolvedProductImage =
-    resolveAsset(
-      productImage,
-      MEDIA_ORIGIN
-    );
+  const resolvedProductImage = resolveAsset(
+    productImage,
+    MEDIA_ORIGIN
+  );
 
-  const resolvedVoiceover =
-    resolveAsset(
-      voiceoverUrl,
-      MEDIA_ORIGIN
-    );
+  const resolvedLogo = resolveAsset(
+    logoImage,
+    MEDIA_ORIGIN
+  );
 
-  const resolvedMusic =
-    resolveAsset(
-      musicUrl,
-      MEDIA_ORIGIN
-    );
+  const resolvedVoiceover = resolveAsset(
+    voiceoverUrl,
+    MEDIA_ORIGIN
+  );
+
+  const resolvedMusic = resolveAsset(
+    musicUrl,
+    MEDIA_ORIGIN
+  );
 
   // ==========================================================================
   // CONTENT
   // ==========================================================================
 
-  const safeFeatures =
-    safeArray(features);
-
-  const safeBenefits =
-    safeArray(whyChooseUs);
+  const safeFeatures = safeArray(features);
+  const safeBenefits = safeArray(whyChooseUs);
 
   const hasFeatures =
     featuresVisible &&
@@ -587,6 +601,10 @@ export function PromoVideo({
   const hasBenefits =
     whyChooseUsVisible &&
     safeBenefits.length > 0;
+
+  const hasCTA =
+    ctaVisible &&
+    Boolean(ctaText?.trim());
 
   const hasWebsite =
     websiteVisible &&
@@ -605,17 +623,13 @@ export function PromoVideo({
     hasPhone ||
     hasEmail;
 
-  const hasCTA =
-    ctaVisible &&
-    Boolean(ctaText?.trim());
-
   const hasLogo =
-    Boolean(logoImage?.trim());
+    Boolean(resolvedLogo);
 
   const hasBadge =
     Boolean(
-      badge &&
-      badge.visible
+      badge?.visible &&
+      badge.text?.trim()
     );
 
   // ==========================================================================
@@ -632,47 +646,117 @@ export function PromoVideo({
     colors?.accent || "#c9a84c";
 
   // ==========================================================================
-  // SCALE
+  // CANVAS
   // ==========================================================================
 
   const scale = width / 1080;
 
   const side = Math.round(
-    width * 0.075
+    width * 0.065
   );
+
+  const top = Math.round(
+    height * 0.035
+  );
+
+  const bottom = Math.round(
+    height * 0.035
+  );
+
+  // ==========================================================================
+  // CONTENT ZONES
+  // ==========================================================================
+
+  const headerHeight = Math.round(
+    height * 0.065
+  );
+
+  const productHeight = Math.round(
+    height * 0.20
+  );
+
+  const headlineHeight = Math.round(
+    height * 0.105
+  );
+
+  const descriptionHeight = Math.round(
+    height * 0.075
+  );
+
+  const featuresHeight = hasFeatures
+    ? Math.round(height * 0.115)
+    : 0;
+
+  const benefitsHeight = hasBenefits
+    ? Math.round(height * 0.115)
+    : 0;
+
+  const ctaHeight = hasCTA
+    ? Math.round(height * 0.065)
+    : 0;
+
+  const footerHeight = hasFooter
+    ? Math.round(height * 0.055)
+    : 0;
+
+  // ==========================================================================
+  // VERTICAL LAYOUT
+  // ==========================================================================
+
+  let currentY = top;
+
+  const headerY = currentY;
+  currentY += headerHeight;
+
+  const productSectionY = currentY;
+  currentY += productHeight;
+
+  const headlineY = currentY;
+  currentY += headlineHeight;
+
+  const descriptionY = currentY;
+  currentY += descriptionHeight;
+
+  const featuresY = currentY;
+  currentY += featuresHeight;
+
+  const benefitsY = currentY;
+  currentY += benefitsHeight;
+
+  const ctaY = currentY;
+
+  const footerY =
+    height -
+    footerHeight -
+    bottom;
 
   // ==========================================================================
   // TIMELINE
   // ==========================================================================
 
-  /*
-   * The composition intentionally reveals content progressively.
-   *
-   * 0 - 24       Brand reveal
-   * 18 - 100     Product entrance
-   * 75 - 150     Headline
-   * 125          Price
-   * 145          Description
-   * 190          Features
-   * 260          Benefits
-   * 335          CTA
-   * 370          Footer
-   * 405          Outro
-   */
-
   const brandStart = 0;
-  const productStart = 18;
-  const headlineStart = 72;
-  const priceStart = 124;
-  const subtextStart = 146;
-  const featuresStart = 194;
-  const benefitsStart = 258;
-  const ctaStart = 326;
-  const footerStart = 366;
-  const outroStart = Math.max(
-    410,
-    durationInFrames - 42
-  );
+  const productStart = 12;
+  const headlineStart = 36;
+  const priceStart = 48;
+  const subtextStart = 62;
+  const featuresStart = 82;
+
+  const benefitsStart =
+    featuresStart +
+    Math.max(
+      16,
+      safeFeatures.length * 4
+    );
+
+  const ctaStart =
+    benefitsStart +
+    Math.max(
+      18,
+      safeBenefits.length * 4
+    );
+
+  const footerStart =
+    ctaStart + 12;
 
   // ==========================================================================
   // BACKGROUND ANIMATION
@@ -691,7 +775,7 @@ export function PromoVideo({
   const glowScale = interpolate(
     glowProgress,
     [0, 1],
-    [1, 1.15]
+    [1, 1.08]
   );
 
   // ==========================================================================
@@ -700,11 +784,7 @@ export function PromoVideo({
 
   const brandOpacity = interpolate(
     frame,
-    [
-      brandStart,
-      brandStart + 8,
-      22,
-    ],
+    [0, 7, 20],
     [0, 1, 0],
     {
       extrapolateLeft: "clamp",
@@ -715,7 +795,7 @@ export function PromoVideo({
   const brandScale = interpolate(
     frame,
     [0, 18],
-    [0.75, 1],
+    [0.8, 1],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
@@ -723,11 +803,14 @@ export function PromoVideo({
   );
 
   // ==========================================================================
-  // PRODUCT
+  // PRODUCT ANIMATION
   // ==========================================================================
 
   const productProgress = spring({
-    frame: frame - productStart,
+    frame: Math.max(
+      0,
+      frame - productStart
+    ),
     fps,
     config: {
       damping: 17,
@@ -749,105 +832,104 @@ export function PromoVideo({
     }
   );
 
-  const productY = interpolate(
+  // IMPORTANT:
+  // This is an animation offset, not the layout position.
+  // Keeping a separate name avoids the original productY
+  // redeclaration bug.
+  const productOffsetY = interpolate(
     productProgress,
     [0, 1],
-    [90, 0]
+    [55, 0]
   );
 
   const productScale = interpolate(
     productProgress,
     [0, 1],
-    [0.72, 1]
+    [0.78, 1]
   );
 
-  const productElapsed =
-    Math.max(
-      0,
-      frame - productStart
-    );
+  const productElapsed = Math.max(
+    0,
+    frame - productStart
+  );
 
   const productBob =
-    Math.sin(
-      productElapsed / 17
-    ) * 3;
+    Math.sin(productElapsed / 20) * 2;
 
   const productRotate =
-    Math.sin(
-      productElapsed / 40
-    ) * 0.7;
+    Math.sin(productElapsed / 45) * 0.35;
 
-  // Slow premium camera movement
-  const cameraProgress =
-    interpolate(
-      frame,
-      [
-        productStart,
-        durationInFrames,
-      ],
-      [0, 1],
-      {
-        extrapolateLeft: "clamp",
-        extrapolateRight: "clamp",
-      }
-    );
+  const cameraProgress = interpolate(
+    frame,
+    [
+      productStart,
+      durationInFrames,
+    ],
+    [0, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
 
-  const cameraScale =
-    interpolate(
-      cameraProgress,
-      [0, 1],
-      [1, 1.075]
-    );
+  const cameraScale = interpolate(
+    cameraProgress,
+    [0, 1],
+    [1, 1.035]
+  );
 
   // ==========================================================================
   // HEADLINE
   // ==========================================================================
 
   const headlineWords =
-    String(headline || "")
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 8);
+    splitHeadline(headline);
 
   // ==========================================================================
   // PRICE
   // ==========================================================================
 
-  const priceProgress =
-    spring({
-      frame: frame - priceStart,
-      fps,
-      config: {
-        damping: 12,
-        stiffness: 190,
-        mass: 0.5,
-      },
-    });
+  const priceProgress = spring({
+    frame: Math.max(
+      0,
+      frame - priceStart
+    ),
+    fps,
+    config: {
+      damping: 12,
+      stiffness: 190,
+      mass: 0.5,
+    },
+  });
 
-  const priceOpacity =
-    interpolate(
-      frame,
-      [
-        priceStart,
-        priceStart + 15,
-      ],
-      [0, 1],
-      {
-        extrapolateLeft: "clamp",
-        extrapolateRight: "clamp",
-      }
-    );
+  const priceOpacity = interpolate(
+    frame,
+    [
+      priceStart,
+      priceStart + 14,
+    ],
+    [0, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }
+  );
+
+  const priceScale = interpolate(
+    priceProgress,
+    [0, 1],
+    [0.8, 1]
+  );
 
   // ==========================================================================
-  // SUBTEXT
+  // DESCRIPTION
   // ==========================================================================
 
-  const subtextStyle =
-    fadeUp(
-      frame,
-      subtextStart,
-      18
-    );
+  const subtextStyle = fadeUp(
+    frame,
+    subtextStart,
+    16
+  );
 
   // ==========================================================================
   // CTA
@@ -855,7 +937,10 @@ export function PromoVideo({
 
   const ctaProgress = hasCTA
     ? spring({
-        frame: frame - ctaStart,
+        frame: Math.max(
+          0,
+          frame - ctaStart
+        ),
         fps,
         config: {
           damping: 12,
@@ -870,7 +955,7 @@ export function PromoVideo({
         frame,
         [
           ctaStart,
-          ctaStart + 15,
+          ctaStart + 14,
         ],
         [0, 1],
         {
@@ -884,81 +969,106 @@ export function PromoVideo({
     ? interpolate(
         ctaProgress,
         [0, 1],
-        [0.85, 1]
+        [0.92, 1]
       )
     : 1;
 
-  const ctaLine =
-    hasCTA
-      ? interpolate(
-          frame,
-          [
-            ctaStart + 8,
-            ctaStart + 28,
-          ],
-          [0, 100],
-          {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-          }
-        )
-      : 0;
+  const ctaLine = hasCTA
+    ? interpolate(
+        frame,
+        [
+          ctaStart + 5,
+          ctaStart + 22,
+        ],
+        [0, 100],
+        {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        }
+      )
+    : 0;
 
   // ==========================================================================
   // FOOTER
   // ==========================================================================
 
-  const footerStyle =
-    fadeUp(
-      frame,
-      footerStart,
-      18
-    );
+  const footerStyle = fadeUp(
+    frame,
+    footerStart,
+    16
+  );
 
   // ==========================================================================
   // BADGE
   // ==========================================================================
 
-  const badgeProgress =
-    spring({
-      frame:
-        frame -
-        (productStart + 22),
-      fps,
-      config: {
-        damping: 10,
-        stiffness: 210,
-        mass: 0.5,
-      },
-    });
+  const badgeProgress = spring({
+    frame: Math.max(
+      0,
+      frame - (productStart + 18)
+    ),
+    fps,
+    config: {
+      damping: 10,
+      stiffness: 210,
+      mass: 0.5,
+    },
+  });
 
-  const badgeScale =
-    badge
-      ? badge.transform.scale *
-        interpolate(
-          badgeProgress,
-          [0, 1],
-          [0.5, 1]
-        )
-      : 1;
+  const badgeScale = badge
+    ? badge.transform.scale *
+      interpolate(
+        badgeProgress,
+        [0, 1],
+        [0.5, 1]
+      )
+    : 1;
 
   // ==========================================================================
-  // OUTRO
+  // AUDIO
   // ==========================================================================
 
-  const outroOpacity =
-    interpolate(
-      frame,
+  const musicBaseVolume = Math.max(
+    0,
+    Math.min(
+      1,
+      Number(musicVolume ?? 0.12)
+    )
+  );
+
+  const musicFadeStart = Math.max(
+    0,
+    durationInFrames - 30
+  );
+
+  const musicVolumeAtFrame = (
+    audioFrame: number
+  ) => {
+    const fade = interpolate(
+      audioFrame,
       [
-        outroStart,
-        outroStart + 15,
+        0,
+        15,
+        musicFadeStart,
+        durationInFrames,
       ],
-      [0, 1],
+      [
+        0,
+        musicBaseVolume,
+        musicBaseVolume,
+        0,
+      ],
       {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
       }
     );
+
+    return Math.min(
+      musicBaseVolume,
+      fade
+    );
+  };
 
   // ==========================================================================
   // RENDER
@@ -978,45 +1088,22 @@ export function PromoVideo({
       {/* AUDIO */}
       {/* ================================================================== */}
 
-      {resolvedVoiceover && (
+      {resolvedVoiceover ? (
         <Audio
           src={resolvedVoiceover}
           volume={1}
         />
-      )}
+      ) : null}
 
-      {resolvedMusic && (
+      {resolvedMusic ? (
         <Audio
           src={resolvedMusic}
-          volume={(audioFrame) =>
-            interpolate(
-              audioFrame,
-              [
-                0,
-                30,
-                Math.max(
-                  30,
-                  outroStart - 15
-                ),
-                outroStart + 10,
-              ],
-              [
-                0,
-                musicVolume,
-                musicVolume,
-                0,
-              ],
-              {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-              }
-            )
-          }
+          volume={musicVolumeAtFrame}
         />
-      )}
+      ) : null}
 
       {/* ================================================================== */}
-      {/* CINEMATIC BACKGROUND */}
+      {/* BACKGROUND */}
       {/* ================================================================== */}
 
       <AbsoluteFill
@@ -1024,37 +1111,33 @@ export function PromoVideo({
           pointerEvents: "none",
         }}
       >
-        {/* Top-right glow */}
         <div
           style={{
             position: "absolute",
             width: 700 * scale,
             height: 700 * scale,
-            borderRadius: "50%",
             right: -280 * scale,
             top: -260 * scale,
+            borderRadius: "50%",
             background:
               `radial-gradient(circle, ${accent}22 0%, ${accent}08 32%, transparent 72%)`,
-            transform:
-              `scale(${glowScale})`,
+            transform: `scale(${glowScale})`,
           }}
         />
 
-        {/* Bottom-left glow */}
         <div
           style={{
             position: "absolute",
             width: 550 * scale,
             height: 550 * scale,
-            borderRadius: "50%",
             left: -260 * scale,
             bottom: -250 * scale,
+            borderRadius: "50%",
             background:
               `radial-gradient(circle, ${accent}14 0%, transparent 72%)`,
           }}
         />
 
-        {/* Cinematic vertical light */}
         <div
           style={{
             position: "absolute",
@@ -1064,7 +1147,6 @@ export function PromoVideo({
             width: 1,
             background:
               `linear-gradient(to bottom, transparent, ${accent}12, transparent)`,
-            opacity: 0.8,
           }}
         />
       </AbsoluteFill>
@@ -1073,47 +1155,48 @@ export function PromoVideo({
       {/* BRAND INTRO */}
       {/* ================================================================== */}
 
-      <AbsoluteFill
-        style={{
-          alignItems: "center",
-          justifyContent: "center",
-          pointerEvents: "none",
-          opacity: brandOpacity,
-        }}
-      >
-        <div
+      {brandName ? (
+        <AbsoluteFill
           style={{
-            display: "flex",
-            flexDirection: "column",
             alignItems: "center",
-            gap: 10,
-            transform:
-              `scale(${brandScale})`,
+            justifyContent: "center",
+            opacity: brandOpacity,
+            pointerEvents: "none",
+            zIndex: 90,
           }}
         >
           <div
             style={{
-              fontSize: 14 * scale,
-              fontWeight: 850,
-              letterSpacing: "0.32em",
-              textTransform: "uppercase",
-              color: secondary,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 9,
+              transform:
+                `scale(${brandScale})`,
             }}
           >
-            {brandName}
-          </div>
+            <div
+              style={{
+                fontSize: 14 * scale,
+                fontWeight: 850,
+                letterSpacing: "0.30em",
+                textTransform: "uppercase",
+                color: secondary,
+              }}
+            >
+              {brandName}
+            </div>
 
-          <div
-            style={{
-              width: 55 * scale,
-              height: 2,
-              background: accent,
-              boxShadow:
-                `0 0 18px ${accent}77`,
-            }}
-          />
-        </div>
-      </AbsoluteFill>
+            <div
+              style={{
+                width: 55 * scale,
+                height: 2,
+                background: accent,
+              }}
+            />
+          </div>
+        </AbsoluteFill>
+      ) : null}
 
       {/* ================================================================== */}
       {/* MAIN CONTENT */}
@@ -1121,34 +1204,32 @@ export function PromoVideo({
 
       <AbsoluteFill
         style={{
-          padding:
-            `${Math.round(height * 0.045)}px ${side}px ${Math.round(
-              height * 0.035
-            )}px`,
+          zIndex: 5,
         }}
       >
-        {/* ================================================================= */}
-        {/* TOP BRAND */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
+        {/* HEADER */}
+        {/* ================================================================ */}
 
         <div
           style={{
             position: "absolute",
-            top: Math.round(height * 0.045),
+            top: headerY,
             left: side,
             right: side,
+            height: headerHeight,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            zIndex: 10,
+            zIndex: 20,
           }}
         >
-          {brandName && (
+          {brandName ? (
             <div
               style={{
                 fontSize: 10 * scale,
                 fontWeight: 800,
-                letterSpacing: "0.2em",
+                letterSpacing: "0.18em",
                 textTransform: "uppercase",
                 color: secondary,
                 opacity: 0.5,
@@ -1156,54 +1237,47 @@ export function PromoVideo({
             >
               {brandName}
             </div>
+          ) : (
+            <div />
           )}
 
-          {hasLogo && (
+          {hasLogo ? (
             <Img
-              src={resolveAsset(
-                logoImage,
-                MEDIA_ORIGIN
-              )}
+              src={resolvedLogo}
               style={{
-                width: 54 * scale,
-                height: 54 * scale,
+                width: 46 * scale,
+                height: 46 * scale,
                 objectFit: "contain",
-                opacity: 0.95,
               }}
             />
-          )}
+          ) : null}
         </div>
 
-        {/* ================================================================= */}
-        {/* PRODUCT ZONE */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
+        {/* PRODUCT */}
+        {/* ================================================================ */}
 
         <div
           style={{
             position: "absolute",
-            top: Math.round(height * 0.095),
+            top: productSectionY,
             left: side,
             right: side,
-            height: Math.round(height * 0.32),
-
+            height: productHeight,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-
             opacity: productOpacity,
-
             transform:
-              `translateY(${productY + productBob}px) scale(${productScale}) rotate(${productRotate}deg)`,
-
-            zIndex: 2,
+              `translateY(${productOffsetY + productBob}px) scale(${productScale}) rotate(${productRotate}deg)`,
+            zIndex: 4,
           }}
         >
-          {/* Product spotlight */}
           <div
             style={{
               position: "absolute",
-              width: "70%",
-              height: "85%",
+              width: "68%",
+              height: "90%",
               borderRadius: "50%",
               background:
                 `radial-gradient(circle, ${accent}18 0%, transparent 68%)`,
@@ -1215,23 +1289,21 @@ export function PromoVideo({
             <Img
               src={resolvedProductImage}
               style={{
-                maxWidth: "72%",
-                maxHeight: "100%",
+                maxWidth: "60%",
+                maxHeight: "92%",
                 objectFit: "contain",
-
                 transform:
                   `scale(${cameraScale})`,
-
                 filter:
-                  "drop-shadow(0 28px 45px rgba(0,0,0,0.65))",
+                  "drop-shadow(0 22px 40px rgba(0,0,0,0.65))",
               }}
             />
           ) : (
             <div
               style={{
-                width: 180 * scale,
-                height: 180 * scale,
-                borderRadius: 30,
+                width: 150 * scale,
+                height: 150 * scale,
+                borderRadius: 26,
                 border:
                   `1px solid ${accent}44`,
                 background:
@@ -1241,25 +1313,23 @@ export function PromoVideo({
           )}
         </div>
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* BADGE */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {hasBadge && badge && (
+        {hasBadge && badge ? (
           <div
             style={{
               position: "absolute",
-
-              right: side * 0.15,
-              top: Math.round(height * 0.18),
-
-              width: 105 * scale,
-              height: 105 * scale,
-
+              right: side * 0.1,
+              top:
+                productSectionY +
+                productHeight * 0.1,
+              width: 94 * scale,
+              height: 94 * scale,
               transform:
-                `scale(${badgeScale}) rotate(-8deg)`,
-
-              zIndex: 20,
+                `translate(${badge.transform.x}px, ${badge.transform.y}px) scale(${badgeScale}) rotate(-8deg)`,
+              zIndex: 25,
             }}
           >
             <div
@@ -1291,80 +1361,87 @@ export function PromoVideo({
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
+                padding: 10,
+                boxSizing: "border-box",
               }}
             >
               <div
                 style={{
-                  fontSize: 23 * scale,
+                  fontSize: 20 * scale,
                   fontWeight: 950,
                   color: badge.textColor,
                   lineHeight: 1,
+                  textAlign: "center",
                 }}
               >
-                {badge.text}
+                {clampText(
+                  badge.text,
+                  18
+                )}
               </div>
 
-              <div
-                style={{
-                  marginTop: 4,
-                  fontSize: 9 * scale,
-                  fontWeight: 800,
-                  letterSpacing: "0.12em",
-                  color: badge.textColor,
-                  opacity: 0.85,
-                }}
-              >
-                {badge.subText}
-              </div>
+              {badge.subText ? (
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: 8 * scale,
+                    fontWeight: 800,
+                    letterSpacing: "0.08em",
+                    color: badge.textColor,
+                    opacity: 0.85,
+                    textAlign: "center",
+                  }}
+                >
+                  {clampText(
+                    badge.subText,
+                    25
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
-        {/* HEADLINE ZONE */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
+        {/* HEADLINE */}
+        {/* ================================================================ */}
 
         <div
           style={{
             position: "absolute",
-
-            top: Math.round(height * 0.405),
-
+            top: headlineY,
             left: side,
             right: side,
-
-            zIndex: 5,
+            height: headlineHeight,
+            zIndex: 10,
+            overflow: "hidden",
           }}
         >
           <div
             style={{
-              maxWidth: "94%",
-              lineHeight: 1,
+              maxWidth: "96%",
+              lineHeight: 0.98,
             }}
           >
             {headlineWords.map(
               (word, index) => {
                 const delay =
                   headlineStart +
-                  index * 5;
+                  index * 3;
 
                 const progress =
-                  spring({
-                    frame:
-                      frame - delay,
-                    fps,
-                    config: {
-                      damping: 20,
-                      stiffness: 135,
-                    },
-                  });
+                  springIn(
+                    frame,
+                    delay,
+                    fps
+                  );
 
                 const opacity =
                   interpolate(
                     frame,
                     [
                       delay,
-                      delay + 12,
+                      delay + 9,
                     ],
                     [0, 1],
                     {
@@ -1379,7 +1456,7 @@ export function PromoVideo({
                   interpolate(
                     progress,
                     [0, 1],
-                    [30, 0]
+                    [18, 0]
                   );
 
                 return (
@@ -1388,30 +1465,24 @@ export function PromoVideo({
                     style={{
                       display:
                         "inline-block",
-
-                      marginRight: 8,
-                      marginBottom: 4,
-
+                      marginRight:
+                        6 * scale,
+                      marginBottom: 2,
                       fontSize:
                         Math.max(
-                          28,
+                          26,
                           Math.round(
-                            width * 0.031
+                            width * 0.03
                           )
                         ),
-
                       fontWeight: 950,
-
                       letterSpacing:
                         "-0.045em",
-
                       color:
                         index === 0
                           ? accent
                           : secondary,
-
                       opacity,
-
                       transform:
                         `translateY(${y}px)`,
                     }}
@@ -1424,32 +1495,27 @@ export function PromoVideo({
           </div>
         </div>
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* PRICE */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {price && (
+        {price ? (
           <div
             style={{
               position: "absolute",
-
-              top: Math.round(height * 0.505),
-
+              top:
+                headlineY +
+                headlineHeight -
+                Math.round(
+                  height * 0.012
+                ),
               left: side,
-
               opacity: priceOpacity,
-
               transform:
-                `scale(${interpolate(
-                  priceProgress,
-                  [0, 1],
-                  [0.7, 1]
-                )})`,
-
+                `scale(${priceScale})`,
               transformOrigin:
                 "left center",
-
-              zIndex: 5,
+              zIndex: 11,
             }}
           >
             <div
@@ -1461,7 +1527,7 @@ export function PromoVideo({
             >
               <div
                 style={{
-                  width: 22,
+                  width: 18,
                   height: 2,
                   background: accent,
                 }}
@@ -1471,42 +1537,39 @@ export function PromoVideo({
                 style={{
                   fontSize:
                     Math.max(
-                      24,
+                      21,
                       Math.round(
-                        width * 0.028
+                        width * 0.025
                       )
                     ),
-
                   fontWeight: 950,
-
                   letterSpacing:
                     "-0.04em",
-
                   color: accent,
                 }}
               >
-                {price}
+                {clampText(
+                  price,
+                  35
+                )}
               </span>
             </div>
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
-        {/* SUBTEXT */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
+        {/* DESCRIPTION */}
+        {/* ================================================================ */}
 
-        {subtext && (
+        {subtext ? (
           <div
             style={{
               position: "absolute",
-
-              top: Math.round(height * 0.555),
-
+              top: descriptionY,
               left: side,
               right: side,
-
-              maxWidth: "82%",
-
+              height: descriptionHeight,
+              maxWidth: "90%",
               fontSize:
                 Math.max(
                   12,
@@ -1514,40 +1577,39 @@ export function PromoVideo({
                     width * 0.012
                   )
                 ),
-
-              lineHeight: 1.45,
-
+              lineHeight: 1.35,
               color: secondary,
-
               opacity:
-                (subtextStyle.opacity || 0) *
-                0.75,
-
+                Number(
+                  subtextStyle.opacity
+                ) * 0.75,
               transform:
                 subtextStyle.transform,
-
-              zIndex: 5,
+              zIndex: 10,
+              overflow: "hidden",
             }}
           >
-            {subtext}
+            {clampText(
+              subtext,
+              180
+            )}
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* FEATURES */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {hasFeatures && (
+        {hasFeatures ? (
           <div
             style={{
               position: "absolute",
-
-              top: Math.round(height * 0.635),
-
+              top: featuresY,
               left: side,
               right: side,
-
-              zIndex: 5,
+              height: featuresHeight,
+              zIndex: 10,
+              overflow: "hidden",
             }}
           >
             <SectionTitle
@@ -1557,39 +1619,37 @@ export function PromoVideo({
               Features
             </SectionTitle>
 
-            <div>
-              {safeFeatures.map(
-                (feature, index) => (
-                  <FeatureRow
-                    key={`feature-${index}`}
-                    text={feature}
-                    index={index}
-                    start={featuresStart}
-                    accent={accent}
-                    textColor={secondary}
-                    width={width}
-                  />
-                )
-              )}
-            </div>
+            {safeFeatures.map(
+              (feature, index) => (
+                <FeatureRow
+                  key={`feature-${index}`}
+                  text={feature}
+                  index={index}
+                  start={featuresStart}
+                  accent={accent}
+                  textColor={secondary}
+                  width={width}
+                  fps={fps}
+                />
+              )
+            )}
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* WHY CHOOSE US */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {hasBenefits && (
+        {hasBenefits ? (
           <div
             style={{
               position: "absolute",
-
-              top: Math.round(height * 0.735),
-
+              top: benefitsY,
               left: side,
               right: side,
-
-              zIndex: 5,
+              height: benefitsHeight,
+              zIndex: 10,
+              overflow: "hidden",
             }}
           >
             <SectionTitle
@@ -1603,6 +1663,7 @@ export function PromoVideo({
               style={{
                 display: "flex",
                 gap: 8,
+                width: "100%",
               }}
             >
               {safeBenefits.map(
@@ -1616,74 +1677,70 @@ export function PromoVideo({
                     textColor={secondary}
                     primary={primary}
                     width={width}
+                    fps={fps}
                   />
                 )
               )}
             </div>
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* CTA */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {hasCTA && (
+        {hasCTA ? (
           <div
             style={{
               position: "absolute",
-
               left: side,
               right: side,
-
-              top: Math.round(height * 0.835),
-
+              top: ctaY,
+              height: ctaHeight,
               opacity: ctaOpacity,
-
               transform:
                 `scale(${ctaScale})`,
-
               transformOrigin:
                 "left center",
-
-              zIndex: 8,
+              zIndex: 15,
             }}
           >
             <div
               style={{
                 display: "inline-flex",
                 flexDirection: "column",
-                gap: 7,
+                gap: 6,
               }}
             >
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 9,
+                  gap: 8,
                 }}
               >
                 <span
                   style={{
                     fontSize:
                       14 * scale,
-
                     fontWeight: 900,
-
                     letterSpacing:
-                      "0.08em",
-
+                      "0.07em",
                     textTransform:
                       "uppercase",
-
                     color: secondary,
                   }}
                 >
-                  {ctaText}
+                  {clampText(
+                    ctaText,
+                    60
+                  )}
                 </span>
 
                 <span
                   style={{
-                    fontSize: 16 * scale,
+                    fontSize:
+                      16 * scale,
                     color: accent,
                   }}
                 >
@@ -1697,72 +1754,58 @@ export function PromoVideo({
                   width: `${ctaLine}%`,
                   background: accent,
                   borderRadius: 3,
-                  boxShadow:
-                    `0 0 14px ${accent}66`,
                 }}
               />
             </div>
           </div>
-        )}
+        ) : null}
 
-        {/* ================================================================= */}
+        {/* ================================================================ */}
         {/* FOOTER */}
-        {/* ================================================================= */}
+        {/* ================================================================ */}
 
-        {hasFooter && (
+        {hasFooter ? (
           <div
             style={{
               position: "absolute",
-
               left: side,
               right: side,
-
-              bottom: Math.round(
-                height * 0.035
-              ),
-
+              top: footerY,
+              height: footerHeight,
               display: "flex",
               alignItems: "center",
-
-              gap: 14,
-
-              padding:
-                "9px 12px",
-
-              borderRadius: 10,
-
+              gap: 10,
+              padding: "7px 10px",
+              borderRadius: 9,
               border:
                 `1px solid ${secondary}16`,
-
               background:
                 `${secondary}05`,
-
               opacity:
                 footerStyle.opacity,
-
               transform:
                 footerStyle.transform,
-
-              zIndex: 8,
+              zIndex: 20,
+              overflow: "hidden",
+              boxSizing: "border-box",
             }}
           >
-            {hasWebsite && (
+            {hasWebsite ? (
               <span
                 style={{
                   fontSize: 9 * scale,
                   color: secondary,
-                  opacity: 0.6,
-                  letterSpacing:
-                    "0.05em",
-                  whiteSpace:
-                    "nowrap",
+                  opacity: 0.65,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                 }}
               >
                 {website}
               </span>
-            )}
+            ) : null}
 
-            {hasPhone && (
+            {hasPhone ? (
               <>
                 <span
                   style={{
@@ -1770,6 +1813,7 @@ export function PromoVideo({
                     height: 3,
                     borderRadius: "50%",
                     background: accent,
+                    flexShrink: 0,
                   }}
                 />
 
@@ -1778,16 +1822,17 @@ export function PromoVideo({
                     fontSize: 9 * scale,
                     color: secondary,
                     opacity: 0.55,
-                    whiteSpace:
-                      "nowrap",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {phone}
                 </span>
               </>
-            )}
+            ) : null}
 
-            {hasEmail && (
+            {hasEmail ? (
               <>
                 <span
                   style={{
@@ -1795,6 +1840,7 @@ export function PromoVideo({
                     height: 3,
                     borderRadius: "50%",
                     background: accent,
+                    flexShrink: 0,
                   }}
                 />
 
@@ -1803,76 +1849,17 @@ export function PromoVideo({
                     fontSize: 9 * scale,
                     color: secondary,
                     opacity: 0.55,
-                    whiteSpace:
-                      "nowrap",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {email}
                 </span>
               </>
-            )}
+            ) : null}
           </div>
-        )}
-      </AbsoluteFill>
-
-      {/* ================================================================== */}
-      {/* OUTRO */}
-      {/* ================================================================== */}
-
-      <AbsoluteFill
-        style={{
-          background: primary,
-          opacity: outroOpacity,
-          alignItems: "center",
-          justifyContent: "center",
-          pointerEvents: "none",
-          zIndex: 100,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <div
-            style={{
-              width: 45,
-              height: 2,
-              background: accent,
-              marginBottom: 4,
-            }}
-          />
-
-          <div
-            style={{
-              fontSize: 20 * scale,
-              fontWeight: 950,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              color: accent,
-              textAlign: "center",
-            }}
-          >
-            {brandName}
-          </div>
-
-          {hasWebsite && (
-            <div
-              style={{
-                fontSize: 9 * scale,
-                letterSpacing: "0.16em",
-                color: secondary,
-                opacity: 0.5,
-                textAlign: "center",
-              }}
-            >
-              {website}
-            </div>
-          )}
-        </div>
+        ) : null}
       </AbsoluteFill>
     </AbsoluteFill>
   );

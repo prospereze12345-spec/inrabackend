@@ -42,7 +42,13 @@ const DEFAULT_VOICE =
 
 const DEFAULT_CONCURRENCY = 2;
 
-const RENDER_TIMEOUT = 120_000;
+const RENDER_TIMEOUT = 180_000;
+
+const DEFAULT_FPS = 30;
+
+const MIN_VIDEO_SECONDS = 15;
+
+const MAX_VIDEO_SECONDS = 60;
 
 // ============================================================================
 // LOGGING
@@ -55,7 +61,9 @@ function log(verbose, message) {
 }
 
 function warn(message) {
-  console.warn(`[render] WARNING: ${message}`);
+  console.warn(
+    `[render] WARNING: ${message}`
+  );
 }
 
 // ============================================================================
@@ -123,8 +131,11 @@ function cleanArray(value) {
   }
 
   return value
-    .map((item) => String(item).trim())
-    .filter(Boolean);
+    .map((item) =>
+      String(item ?? "").trim()
+    )
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function ensureDirectory(filePath) {
@@ -143,10 +154,11 @@ function ensurePublicFile(relativePath) {
     relativePath || ""
   ).replace(/^\/+/, "");
 
-  const absolutePath = path.join(
-    PUBLIC_DIR,
-    safePath
-  );
+  const absolutePath =
+    path.join(
+      PUBLIC_DIR,
+      safePath
+    );
 
   fs.mkdirSync(
     path.dirname(absolutePath),
@@ -158,9 +170,13 @@ function ensurePublicFile(relativePath) {
   return absolutePath;
 }
 
-function removeFileIfExists(filePath) {
+function removeFileIfExists(
+  filePath
+) {
   try {
-    if (fs.existsSync(filePath)) {
+    if (
+      fs.existsSync(filePath)
+    ) {
       fs.unlinkSync(filePath);
     }
   } catch (error) {
@@ -225,7 +241,8 @@ function loadConfig(configPath) {
   const missing =
     required.filter(
       (field) =>
-        config[field] === undefined ||
+        config[field] ===
+          undefined ||
         config[field] === null
     );
 
@@ -241,15 +258,16 @@ function loadConfig(configPath) {
   validateInputProps(config);
 
   const isStill =
-    config.stillFrame !== undefined;
+    config.stillFrame !==
+    undefined;
 
   if (
     !isStill &&
-    config.compositionId !== "PromoVideo" &&
-    (!Number.isFinite(
+    !Number.isFinite(
       Number(config.durationInFrames)
-    ) ||
-      Number(config.durationInFrames) <= 0)
+    ) &&
+    config.compositionId !==
+      "PromoVideo"
   ) {
     throw new Error(
       "Video render config requires a valid durationInFrames."
@@ -265,8 +283,9 @@ function validateDimensions(config) {
     "height",
     "fps",
   ]) {
-    const value =
-      Number(config[field]);
+    const value = Number(
+      config[field]
+    );
 
     if (
       !Number.isFinite(value) ||
@@ -303,7 +322,9 @@ function validateInputProps(config) {
     !config.inputProps ||
     typeof config.inputProps !==
       "object" ||
-    Array.isArray(config.inputProps)
+    Array.isArray(
+      config.inputProps
+    )
   ) {
     throw new Error(
       "inputProps must be a JSON object."
@@ -381,11 +402,11 @@ function cleanProps(inputProps) {
 
     features: cleanArray(
       props.features
-    ).slice(0, 3),
+    ),
 
     whyChooseUs: cleanArray(
       props.whyChooseUs
-    ).slice(0, 3),
+    ),
   };
 }
 
@@ -396,33 +417,40 @@ function cleanProps(inputProps) {
 function buildNarration(props) {
   const parts = [];
 
-  const brand = cleanText(
-    props.brandName
-  );
+  const brand =
+    cleanText(
+      props.brandName
+    );
 
-  const headline = cleanText(
-    props.headline
-  );
+  const headline =
+    cleanText(
+      props.headline
+    );
 
-  const subtext = cleanText(
-    props.subtext
-  );
+  const subtext =
+    cleanText(
+      props.subtext
+    );
 
-  const price = cleanText(
-    props.price
-  );
+  const price =
+    cleanText(
+      props.price
+    );
 
-  const features = cleanArray(
-    props.features
-  ).slice(0, 3);
+  const features =
+    cleanArray(
+      props.features
+    );
 
-  const benefits = cleanArray(
-    props.whyChooseUs
-  ).slice(0, 3);
+  const benefits =
+    cleanArray(
+      props.whyChooseUs
+    );
 
-  const cta = cleanText(
-    props.ctaText
-  );
+  const cta =
+    cleanText(
+      props.ctaText
+    );
 
   if (brand) {
     parts.push(brand);
@@ -464,7 +492,10 @@ function buildNarration(props) {
 
   return parts
     .join(". ")
-    .replace(/\.{2,}/g, ".")
+    .replace(
+      /\.{2,}/g,
+      "."
+    )
     .trim();
 }
 
@@ -476,9 +507,11 @@ function resolveMediaOrigin(config) {
   const candidates = [
     config.mediaOrigin,
 
-    process.env.DJANGO_MEDIA_ORIGIN,
+    process.env
+      .DJANGO_MEDIA_ORIGIN,
 
-    process.env.REMOTION_MEDIA_ORIGIN,
+    process.env
+      .REMOTION_MEDIA_ORIGIN,
 
     process.env
       .NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN,
@@ -486,9 +519,12 @@ function resolveMediaOrigin(config) {
     DEFAULT_MEDIA_ORIGIN,
   ];
 
-  for (const candidate of candidates) {
+  for (
+    const candidate of candidates
+  ) {
     if (
-      typeof candidate === "string" &&
+      typeof candidate ===
+        "string" &&
       candidate.trim()
     ) {
       return candidate
@@ -508,15 +544,11 @@ async function prepareVoiceover(
   config,
   verbose
 ) {
-  const props = cleanProps(
-    config.inputProps
-  );
+  const props =
+    cleanProps(
+      config.inputProps
+    );
 
-  /*
-   * If the caller explicitly provides an
-   * external voiceover URL and no narration
-   * should be generated, preserve it.
-   */
   if (
     !props.voiceoverText &&
     props.voiceoverUrl
@@ -569,7 +601,6 @@ async function prepareVoiceover(
       relativePath
     );
 
-  // Never leave stale audio.
   removeFileIfExists(
     absolutePath
   );
@@ -592,10 +623,15 @@ async function prepareVoiceover(
   await generateVoiceover({
     text: narration,
     voice,
-    outputPath: absolutePath,
+    outputPath:
+      absolutePath,
   });
 
-  if (!fs.existsSync(absolutePath)) {
+  if (
+    !fs.existsSync(
+      absolutePath
+    )
+  ) {
     throw new Error(
       `Voiceover generation completed but no file was created: ${absolutePath}`
     );
@@ -619,15 +655,6 @@ async function prepareVoiceover(
     ).toFixed(1)} KB`
   );
 
-  /*
-   * IMPORTANT:
-   *
-   * This is deliberately a Remotion public
-   * path, NOT a Django /media path.
-   *
-   * PromoVideo.tsx detects voiceovers/*
-   * and resolves it through staticFile().
-   */
   return {
     ...props,
 
@@ -640,6 +667,86 @@ async function prepareVoiceover(
 }
 
 // ============================================================================
+// DURATION
+//
+// Approximate narration duration.
+// We deliberately give the narration breathing room.
+// ============================================================================
+
+function estimateVoiceoverSeconds(
+  narration
+) {
+  const text =
+    cleanText(narration);
+
+  if (!text) {
+    return 0;
+  }
+
+  /*
+   * Normal commercial narration is
+   * approximately 135-155 words/minute.
+   *
+   * We use 140 WPM to avoid cutting
+   * narration too aggressively.
+   */
+  const words =
+    text
+      .split(/\s+/)
+      .filter(Boolean)
+      .length;
+
+  const seconds =
+    (words / 140) * 60;
+
+  return seconds;
+}
+
+function calculatePromoDuration(
+  inputProps,
+  fps,
+  config
+) {
+  if (
+    config.durationInFrames &&
+    config.lockDuration === true
+  ) {
+    return Number(
+      config.durationInFrames
+    );
+  }
+
+  const narrationSeconds =
+    estimateVoiceoverSeconds(
+      inputProps.voiceoverText
+    );
+
+  /*
+   * Give the video enough time for:
+   * - brand intro
+   * - content entrance
+   * - narration
+   * - CTA
+   * - small ending buffer
+   */
+  const requiredSeconds =
+    Math.max(
+      MIN_VIDEO_SECONDS,
+      narrationSeconds + 1.5
+    );
+
+  const seconds =
+    Math.min(
+      MAX_VIDEO_SECONDS,
+      requiredSeconds
+    );
+
+  return Math.ceil(
+    seconds * fps
+  );
+}
+
+// ============================================================================
 // CHROMIUM
 // ============================================================================
 
@@ -649,7 +756,6 @@ function getChromiumOptions() {
 
     disableWebSecurity: false,
 
-    // Better reliability on GitHub runners.
     args: [
       "--disable-gpu",
       "--disable-dev-shm-usage",
@@ -695,19 +801,22 @@ async function createBundle(
           mediaOrigin,
       },
 
-      onProgress: verbose
-        ? (progress) => {
-            process.stdout.write(
-              `\r[bundle] ${Math.round(
-                progress
-              )}%`
-            );
-          }
-        : undefined,
+      onProgress:
+        verbose
+          ? (progress) => {
+              process.stdout.write(
+                `\r[bundle] ${Math.round(
+                  progress
+                )}%`
+              );
+            }
+          : undefined,
     });
 
   if (verbose) {
-    process.stdout.write("\n");
+    process.stdout.write(
+      "\n"
+    );
   }
 
   log(
@@ -789,44 +898,51 @@ async function selectRenderComposition({
 }
 
 // ============================================================================
-// COMPOSITION OVERRIDES
+// COMPOSITION OVERRIDE
 // ============================================================================
 
 function buildComposition({
   composition,
   config,
+  inputProps,
   isStill,
 }) {
   const isPromo =
     config.compositionId ===
     "PromoVideo";
 
-  const durationInFrames =
-    isStill
-      ? (
-          composition.durationInFrames ??
-          Number(config.stillFrame) + 1
-        )
-      : isPromo
-        ? composition.durationInFrames
-        : Number(
-            config.durationInFrames
-          );
+  let durationInFrames;
+
+  if (isStill) {
+    durationInFrames =
+      composition.durationInFrames ??
+      Number(config.stillFrame) +
+        1;
+  } else if (isPromo) {
+    durationInFrames =
+      calculatePromoDuration(
+        inputProps,
+        Number(config.fps),
+        config
+      );
+  } else {
+    durationInFrames =
+      Number(
+        config.durationInFrames
+      );
+  }
 
   return {
     ...composition,
 
-    width: Number(
-      config.width
-    ),
+    width:
+      Number(config.width),
 
-    height: Number(
-      config.height
-    ),
+    height:
+      Number(config.height),
 
-    fps: Number(
-      config.fps
-    ),
+    fps:
+      Number(config.fps),
 
     durationInFrames,
   };
@@ -894,11 +1010,6 @@ async function renderVideo({
   chromiumOptions,
   verbose,
 }) {
-  /*
-   * GitHub Actions has enough CPU/memory,
-   * but keeping concurrency configurable
-   * avoids accidental memory explosions.
-   */
   const concurrency =
     Math.max(
       1,
@@ -964,19 +1075,29 @@ async function renderVideo({
 
     x264Preset,
 
-    onProgress: verbose
-      ? ({ progress }) => {
-          process.stdout.write(
-            `\r[render] ${Math.round(
-              progress * 100
-            )}%`
-          );
-        }
-      : undefined,
+    /*
+     * CRITICAL:
+     * Remotion must wait for the audio
+     * and all media before completing.
+     */
+    audioCodec: "aac",
+
+    onProgress:
+      verbose
+        ? ({ progress }) => {
+            process.stdout.write(
+              `\r[render] ${Math.round(
+                progress * 100
+              )}%`
+            );
+          }
+        : undefined,
   });
 
   if (verbose) {
-    process.stdout.write("\n");
+    process.stdout.write(
+      "\n"
+    );
   }
 }
 
@@ -988,7 +1109,9 @@ function validateOutput(
   outputPath
 ) {
   const absolutePath =
-    path.resolve(outputPath);
+    path.resolve(
+      outputPath
+    );
 
   if (
     !fs.existsSync(
@@ -1046,6 +1169,13 @@ async function main() {
     `Media origin: ${mediaOrigin}`
   );
 
+  /*
+   * FIRST:
+   * clean content + generate voiceover.
+   *
+   * This happens before selecting the
+   * final composition duration.
+   */
   const inputProps =
     await prepareVoiceover(
       config,
@@ -1083,6 +1213,17 @@ async function main() {
       "disabled"
     }`
   );
+
+  if (
+    inputProps.voiceoverText
+  ) {
+    log(
+      verbose,
+      `Estimated narration: ${estimateVoiceoverSeconds(
+        inputProps.voiceoverText
+      ).toFixed(2)}s`
+    );
+  }
 
   ensureDirectory(
     config.outputPath
@@ -1127,6 +1268,8 @@ async function main() {
 
       config,
 
+      inputProps,
+
       isStill,
     });
 
@@ -1140,6 +1283,14 @@ async function main() {
       "Remotion returned an invalid composition duration."
     );
   }
+
+  log(
+    verbose,
+    `Final render duration: ${(
+      finalComposition.durationInFrames /
+      finalComposition.fps
+    ).toFixed(2)} seconds`
+  );
 
   if (isStill) {
     await renderStillFrame({
