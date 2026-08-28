@@ -1,4 +1,3 @@
-
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,10 +13,12 @@ import getPort from "get-port";
 import { generateVoiceover } from "./tts.mjs";
 
 // ============================================================================
-// PATHS / CONSTANTS
+// PATHS
 // ============================================================================
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.dirname(
+  fileURLToPath(import.meta.url)
+);
 
 const COMPOSITION_ENTRY = path.join(
   __dirname,
@@ -29,10 +30,15 @@ const PUBLIC_DIR = path.join(
   "public"
 );
 
+// ============================================================================
+// DEFAULTS
+// ============================================================================
+
 const DEFAULT_MEDIA_ORIGIN =
   "https://inrabackend-docker.onrender.com";
 
-const DEFAULT_VOICE = "en-US-AriaNeural";
+const DEFAULT_VOICE =
+  "en-US-AriaNeural";
 
 const DEFAULT_CONCURRENCY = 2;
 
@@ -62,7 +68,11 @@ function parseArgs(argv) {
     configPath: null,
   };
 
-  for (let i = 0; i < argv.length; i++) {
+  for (
+    let i = 0;
+    i < argv.length;
+    i++
+  ) {
     const argument = argv[i];
 
     if (argument === "--verbose") {
@@ -118,9 +128,10 @@ function cleanArray(value) {
 }
 
 function ensureDirectory(filePath) {
-  const directory = path.dirname(
-    path.resolve(filePath)
-  );
+  const directory =
+    path.dirname(
+      path.resolve(filePath)
+    );
 
   fs.mkdirSync(directory, {
     recursive: true,
@@ -128,8 +139,9 @@ function ensureDirectory(filePath) {
 }
 
 function ensurePublicFile(relativePath) {
-  const safePath = String(relativePath || "")
-    .replace(/^\/+/, "");
+  const safePath = String(
+    relativePath || ""
+  ).replace(/^\/+/, "");
 
   const absolutePath = path.join(
     PUBLIC_DIR,
@@ -138,10 +150,26 @@ function ensurePublicFile(relativePath) {
 
   fs.mkdirSync(
     path.dirname(absolutePath),
-    { recursive: true }
+    {
+      recursive: true,
+    }
   );
 
   return absolutePath;
+}
+
+function removeFileIfExists(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    warn(
+      `Could not remove file ${filePath}: ${
+        error?.message || error
+      }`
+    );
+  }
 }
 
 // ============================================================================
@@ -149,9 +177,8 @@ function ensurePublicFile(relativePath) {
 // ============================================================================
 
 function loadConfig(configPath) {
-  const absolutePath = path.resolve(
-    configPath
-  );
+  const absolutePath =
+    path.resolve(configPath);
 
   if (!fs.existsSync(absolutePath)) {
     throw new Error(
@@ -195,11 +222,12 @@ function loadConfig(configPath) {
     "outputPath",
   ];
 
-  const missing = required.filter(
-    (field) =>
-      config[field] === undefined ||
-      config[field] === null
-  );
+  const missing =
+    required.filter(
+      (field) =>
+        config[field] === undefined ||
+        config[field] === null
+    );
 
   if (missing.length) {
     throw new Error(
@@ -237,7 +265,8 @@ function validateDimensions(config) {
     "height",
     "fps",
   ]) {
-    const value = Number(config[field]);
+    const value =
+      Number(config[field]);
 
     if (
       !Number.isFinite(value) ||
@@ -250,11 +279,13 @@ function validateDimensions(config) {
   }
 
   if (
-    config.durationInFrames !== undefined
+    config.durationInFrames !==
+    undefined
   ) {
-    const duration = Number(
-      config.durationInFrames
-    );
+    const duration =
+      Number(
+        config.durationInFrames
+      );
 
     if (
       !Number.isFinite(duration) ||
@@ -270,7 +301,8 @@ function validateDimensions(config) {
 function validateInputProps(config) {
   if (
     !config.inputProps ||
-    typeof config.inputProps !== "object" ||
+    typeof config.inputProps !==
+      "object" ||
     Array.isArray(config.inputProps)
   ) {
     throw new Error(
@@ -291,13 +323,29 @@ function cleanProps(inputProps) {
   return {
     ...props,
 
-    headline: cleanText(props.headline),
-    subtext: cleanText(props.subtext),
-    ctaText: cleanText(props.ctaText),
-    price: cleanText(props.price),
+    headline: cleanText(
+      props.headline
+    ),
 
-    brandName: cleanText(props.brandName),
-    website: cleanText(props.website),
+    subtext: cleanText(
+      props.subtext
+    ),
+
+    ctaText: cleanText(
+      props.ctaText
+    ),
+
+    price: cleanText(
+      props.price
+    ),
+
+    brandName: cleanText(
+      props.brandName
+    ),
+
+    website: cleanText(
+      props.website
+    ),
 
     productImage: cleanText(
       props.productImage
@@ -307,8 +355,13 @@ function cleanProps(inputProps) {
       props.logoImage
     ),
 
-    phone: cleanText(props.phone),
-    email: cleanText(props.email),
+    phone: cleanText(
+      props.phone
+    ),
+
+    email: cleanText(
+      props.email
+    ),
 
     voiceoverText: cleanText(
       props.voiceoverText
@@ -422,9 +475,14 @@ function buildNarration(props) {
 function resolveMediaOrigin(config) {
   const candidates = [
     config.mediaOrigin,
+
     process.env.DJANGO_MEDIA_ORIGIN,
+
     process.env.REMOTION_MEDIA_ORIGIN,
-    process.env.NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN,
+
+    process.env
+      .NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN,
+
     DEFAULT_MEDIA_ORIGIN,
   ];
 
@@ -455,8 +513,9 @@ async function prepareVoiceover(
   );
 
   /*
-   * External voiceover takes priority when
-   * no generated narration is required.
+   * If the caller explicitly provides an
+   * external voiceover URL and no narration
+   * should be generated, preserve it.
    */
   if (
     !props.voiceoverText &&
@@ -495,7 +554,9 @@ async function prepareVoiceover(
     props.jobId ||
     `voice-${Date.now()}`;
 
-  const jobId = String(rawJobId).replace(
+  const jobId = String(
+    rawJobId
+  ).replace(
     /[^a-zA-Z0-9_-]/g,
     "-"
   );
@@ -508,17 +569,14 @@ async function prepareVoiceover(
       relativePath
     );
 
-  /*
-   * Always replace the existing generated
-   * voiceover for the current job.
-   */
-  if (fs.existsSync(absolutePath)) {
-    fs.unlinkSync(absolutePath);
-  }
+  // Never leave stale audio.
+  removeFileIfExists(
+    absolutePath
+  );
 
   log(
     verbose,
-    "Generating voiceover from final flyer state..."
+    "Generating voiceover..."
   );
 
   log(
@@ -544,7 +602,9 @@ async function prepareVoiceover(
   }
 
   const stats =
-    fs.statSync(absolutePath);
+    fs.statSync(
+      absolutePath
+    );
 
   if (stats.size < 1000) {
     throw new Error(
@@ -552,6 +612,22 @@ async function prepareVoiceover(
     );
   }
 
+  log(
+    verbose,
+    `Voiceover created: ${(
+      stats.size / 1024
+    ).toFixed(1)} KB`
+  );
+
+  /*
+   * IMPORTANT:
+   *
+   * This is deliberately a Remotion public
+   * path, NOT a Django /media path.
+   *
+   * PromoVideo.tsx detects voiceovers/*
+   * and resolves it through staticFile().
+   */
   return {
     ...props,
 
@@ -570,7 +646,16 @@ async function prepareVoiceover(
 function getChromiumOptions() {
   return {
     gl: "swiftshader",
+
     disableWebSecurity: false,
+
+    // Better reliability on GitHub runners.
+    args: [
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+    ],
   };
 }
 
@@ -582,7 +667,11 @@ async function createBundle(
   mediaOrigin,
   verbose
 ) {
-  if (!fs.existsSync(COMPOSITION_ENTRY)) {
+  if (
+    !fs.existsSync(
+      COMPOSITION_ENTRY
+    )
+  ) {
     throw new Error(
       `Composition entry not found: ${COMPOSITION_ENTRY}`
     );
@@ -593,27 +682,29 @@ async function createBundle(
     "Bundling PromoVideo..."
   );
 
-  const serveUrl = await bundle({
-    entryPoint: COMPOSITION_ENTRY,
+  const serveUrl =
+    await bundle({
+      entryPoint:
+        COMPOSITION_ENTRY,
 
-    envVariables: {
-      NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN:
-        mediaOrigin,
+      envVariables: {
+        NEXT_PUBLIC_REMOTION_MEDIA_ORIGIN:
+          mediaOrigin,
 
-      REMOTION_MEDIA_ORIGIN:
-        mediaOrigin,
-    },
+        REMOTION_MEDIA_ORIGIN:
+          mediaOrigin,
+      },
 
-    onProgress: verbose
-      ? (progress) => {
-          process.stdout.write(
-            `\r[bundle] ${Math.round(
-              progress
-            )}%`
-          );
-        }
-      : undefined,
-  });
+      onProgress: verbose
+        ? (progress) => {
+            process.stdout.write(
+              `\r[bundle] ${Math.round(
+                progress
+              )}%`
+            );
+          }
+        : undefined,
+    });
 
   if (verbose) {
     process.stdout.write("\n");
@@ -634,16 +725,17 @@ async function createBundle(
 async function getRenderPort(
   verbose
 ) {
-  const port = await getPort({
-    port: [
-      8123,
-      8124,
-      8125,
-      8126,
-      8127,
-      8128,
-    ],
-  });
+  const port =
+    await getPort({
+      port: [
+        8123,
+        8124,
+        8125,
+        8126,
+        8127,
+        8128,
+      ],
+    });
 
   log(
     verbose,
@@ -674,7 +766,8 @@ async function selectRenderComposition({
     await selectComposition({
       serveUrl,
 
-      id: config.compositionId,
+      id:
+        config.compositionId,
 
       inputProps,
 
@@ -708,16 +801,8 @@ function buildComposition({
     config.compositionId ===
     "PromoVideo";
 
-  return {
-    ...composition,
-
-    width: Number(config.width),
-
-    height: Number(config.height),
-
-    fps: Number(config.fps),
-
-    durationInFrames: isStill
+  const durationInFrames =
+    isStill
       ? (
           composition.durationInFrames ??
           Number(config.stillFrame) + 1
@@ -726,7 +811,24 @@ function buildComposition({
         ? composition.durationInFrames
         : Number(
             config.durationInFrames
-          ),
+          );
+
+  return {
+    ...composition,
+
+    width: Number(
+      config.width
+    ),
+
+    height: Number(
+      config.height
+    ),
+
+    fps: Number(
+      config.fps
+    ),
+
+    durationInFrames,
   };
 }
 
@@ -759,13 +861,16 @@ async function renderStillFrame({
       config.stillFrame
     ),
 
-    output: config.outputPath,
+    output:
+      config.outputPath,
 
     imageFormat:
-      config.imageFormat || "png",
+      config.imageFormat ||
+      "png",
 
     jpegQuality:
-      config.jpegQuality ?? undefined,
+      config.jpegQuality ??
+      undefined,
 
     inputProps,
 
@@ -789,19 +894,26 @@ async function renderVideo({
   chromiumOptions,
   verbose,
 }) {
-  const concurrency = Math.max(
-    1,
-    Math.min(
-      4,
-      Number(
-        config.concurrency ??
-          DEFAULT_CONCURRENCY
+  /*
+   * GitHub Actions has enough CPU/memory,
+   * but keeping concurrency configurable
+   * avoids accidental memory explosions.
+   */
+  const concurrency =
+    Math.max(
+      1,
+      Math.min(
+        3,
+        Number(
+          config.concurrency ??
+            DEFAULT_CONCURRENCY
+        )
       )
-    )
-  );
+    );
 
   const x264Preset =
-    config.x264Preset || "fast";
+    config.x264Preset ||
+    "fast";
 
   const durationSeconds =
     composition.durationInFrames /
@@ -878,14 +990,20 @@ function validateOutput(
   const absolutePath =
     path.resolve(outputPath);
 
-  if (!fs.existsSync(absolutePath)) {
+  if (
+    !fs.existsSync(
+      absolutePath
+    )
+  ) {
     throw new Error(
       `Render completed but output file was not created:\n${absolutePath}`
     );
   }
 
   const stats =
-    fs.statSync(absolutePath);
+    fs.statSync(
+      absolutePath
+    );
 
   if (stats.size < 10_000) {
     throw new Error(
@@ -914,10 +1032,14 @@ async function main() {
   );
 
   const config =
-    loadConfig(configPath);
+    loadConfig(
+      configPath
+    );
 
   const mediaOrigin =
-    resolveMediaOrigin(config);
+    resolveMediaOrigin(
+      config
+    );
 
   log(
     verbose,
@@ -933,14 +1055,16 @@ async function main() {
   log(
     verbose,
     `Features: ${
-      inputProps.features?.length || 0
+      inputProps.features?.length ||
+      0
     }`
   );
 
   log(
     verbose,
     `Why Choose Us: ${
-      inputProps.whyChooseUs?.length || 0
+      inputProps.whyChooseUs?.length ||
+      0
     }`
   );
 
@@ -1007,8 +1131,10 @@ async function main() {
     });
 
   if (
-    !finalComposition.durationInFrames ||
-    finalComposition.durationInFrames <= 0
+    !finalComposition
+      .durationInFrames ||
+    finalComposition
+      .durationInFrames <= 0
   ) {
     throw new Error(
       "Remotion returned an invalid composition duration."
@@ -1018,23 +1144,35 @@ async function main() {
   if (isStill) {
     await renderStillFrame({
       serveUrl,
+
       port,
+
       composition:
         finalComposition,
+
       config,
+
       inputProps,
+
       chromiumOptions,
+
       verbose,
     });
   } else {
     await renderVideo({
       serveUrl,
+
       port,
+
       composition:
         finalComposition,
+
       config,
+
       inputProps,
+
       chromiumOptions,
+
       verbose,
     });
   }
@@ -1062,30 +1200,35 @@ async function main() {
 // ERROR HANDLER
 // ============================================================================
 
-main().catch((error) => {
-  console.error(
-    "\n========================================"
-  );
-
-  console.error(
-    "INRASTUDIO REMOTION RENDER FAILED"
-  );
-
-  console.error(
-    "========================================"
-  );
-
-  console.error(
-    error?.message || error
-  );
-
-  if (error?.stack) {
+main().catch(
+  (error) => {
     console.error(
-      "\nStack trace:"
+      "\n========================================"
     );
 
-    console.error(error.stack);
-  }
+    console.error(
+      "INRASTUDIO REMOTION RENDER FAILED"
+    );
 
-  process.exit(1);
-});
+    console.error(
+      "========================================"
+    );
+
+    console.error(
+      error?.message ||
+        error
+    );
+
+    if (error?.stack) {
+      console.error(
+        "\nStack trace:"
+      );
+
+      console.error(
+        error.stack
+      );
+    }
+
+    process.exit(1);
+  }
+);

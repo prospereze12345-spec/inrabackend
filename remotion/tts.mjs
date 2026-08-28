@@ -1,15 +1,3 @@
-// remotion/tts.mjs
-//
-// INRASTUDIO
-// Edge TTS voiceover generator
-//
-// Generates a local MP3 that Remotion can use directly.
-//
-// Default voice:
-//   en-US-AriaNeural
-//
-// The renderer intentionally uses ONE default voice.
-// Users do not need to select a voice.
 
 import fs from "node:fs";
 import path from "node:path";
