@@ -8,9 +8,11 @@ on:
 jobs:
   render:
     runs-on: ubuntu-latest
+
     timeout-minutes: 30
 
     steps:
+
       # ================================================================
       # CHECKOUT
       # ================================================================
@@ -30,15 +32,16 @@ jobs:
           cache-dependency-path: remotion/package-lock.json
 
       # ================================================================
-      # INSTALL DEPENDENCIES
+      # SYSTEM DEPENDENCIES
       # ================================================================
 
-      - name: Install dependencies
-        working-directory: remotion
-        run: npm ci
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       # ================================================================
-      # REMOTION / CHROMIUM CACHE
+      # REMOTION BROWSER CACHE
       # ================================================================
 
       - name: Cache Remotion browser
@@ -47,10 +50,20 @@ jobs:
           path: |
             ~/.cache/puppeteer
             ~/.cache/remotion
+            ~/.cache/ms-playwright
             remotion/node_modules/.cache
           key: remotion-browser-${{ runner.os }}-${{ hashFiles('remotion/package-lock.json') }}
           restore-keys: |
             remotion-browser-${{ runner.os }}-
+
+      # ================================================================
+      # INSTALL DEPENDENCIES
+      # ================================================================
+
+      - name: Install dependencies
+        working-directory: remotion
+        run: |
+          npm ci
 
       # ================================================================
       # BROWSER SETUP
@@ -68,27 +81,45 @@ jobs:
       - name: Check render environment
         working-directory: remotion
         run: |
-          echo "Node:"
+          echo "========================================"
+          echo "NODE"
+          echo "========================================"
           node --version
 
           echo ""
-          echo "npm:"
+          echo "========================================"
+          echo "NPM"
+          echo "========================================"
           npm --version
 
           echo ""
-          echo "Remotion:"
+          echo "========================================"
+          echo "REMOTION"
+          echo "========================================"
           npx remotion versions
 
           echo ""
-          echo "Available memory:"
+          echo "========================================"
+          echo "FFMPEG"
+          echo "========================================"
+          ffmpeg -version | head -n 1
+
+          echo ""
+          echo "========================================"
+          echo "MEMORY"
+          echo "========================================"
           free -h
 
           echo ""
-          echo "CPU:"
+          echo "========================================"
+          echo "CPU"
+          echo "========================================"
           nproc
 
           echo ""
-          echo "Disk:"
+          echo "========================================"
+          echo "DISK"
+          echo "========================================"
           df -h
 
       # ================================================================
@@ -99,7 +130,11 @@ jobs:
         env:
           RENDER_CONFIG: ${{ toJSON(github.event.client_payload.config) }}
         run: |
+          set -euo pipefail
+
           printf '%s' "$RENDER_CONFIG" > /tmp/config.json
+
+          echo "Config written."
 
       # ================================================================
       # VALIDATE CONFIG
@@ -107,6 +142,8 @@ jobs:
 
       - name: Validate render config
         run: |
+          set -euo pipefail
+
           echo "Render configuration:"
           cat /tmp/config.json
 
@@ -118,12 +155,35 @@ jobs:
           echo "JSON is valid."
 
       # ================================================================
+      # PREPARE OUTPUT DIRECTORY
+      # ================================================================
+
+      - name: Prepare output directory
+        working-directory: remotion
+        env:
+          OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OUTPUT_PATH:-}" ]; then
+            echo "ERROR: outputPath is empty."
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "${OUTPUT_PATH}")"
+
+          echo "Output path:"
+          echo "${OUTPUT_PATH}"
+
+      # ================================================================
       # RENDER
       # ================================================================
 
       - name: Render video
         working-directory: remotion
         run: |
+          set -euo pipefail
+
           node render.mjs \
             --config /tmp/config.json \
             --verbose
@@ -137,10 +197,19 @@ jobs:
         env:
           OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
         run: |
-          echo "Expected output: ${OUTPUT_PATH}"
+          set -euo pipefail
+
+          echo "Expected output:"
+          echo "${OUTPUT_PATH}"
 
           if [ ! -f "${OUTPUT_PATH}" ]; then
+            echo ""
             echo "ERROR: Rendered video was not found."
+            echo ""
+
+            echo "Render directory:"
+            find . -maxdepth 4 -type f | sort | head -200
+
             exit 1
           fi
 
@@ -151,14 +220,12 @@ jobs:
           echo ""
           echo "Video information:"
 
-          if command -v ffprobe >/dev/null 2>&1; then
-            ffprobe \
-              -v error \
-              -show_entries \
-              format=duration,size \
-              -of default=noprint_wrappers=1 \
-              "${OUTPUT_PATH}"
-          fi
+          ffprobe \
+            -v error \
+            -show_entries \
+            format=duration,size,format_name \
+            -of default=noprint_wrappers=1 \
+            "${OUTPUT_PATH}"
 
       # ================================================================
       # CLOUDINARY
@@ -166,12 +233,15 @@ jobs:
 
       - name: Upload to Cloudinary
         id: upload
+
         env:
           CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           UPLOAD_PRESET: ${{ secrets.CLOUDINARY_UNSIGNED_PRESET }}
           JOB_ID: ${{ github.event.client_payload.job_id }}
           OUTPUT_PATH: ${{ github.event.client_payload.config.outputPath }}
+
         shell: bash
+
         run: |
           set -euo pipefail
 
@@ -210,7 +280,8 @@ jobs:
           echo ""
           echo "Uploading video..."
 
-          curl --fail-with-body \
+          curl \
+            --fail-with-body \
             --silent \
             --show-error \
             --request POST \
@@ -226,17 +297,17 @@ jobs:
 
           VIDEO_URL=$(
             jq -r '.secure_url // empty' \
-            /tmp/cloudinary_response.json
+              /tmp/cloudinary_response.json
           )
 
           if [ -z "${VIDEO_URL}" ]; then
+            echo ""
             echo "ERROR: Cloudinary did not return secure_url."
             exit 1
           fi
 
           echo ""
-          echo "Video uploaded successfully:"
-          echo "${VIDEO_URL}"
+          echo "Video uploaded successfully."
 
           echo "video_url=${VIDEO_URL}" >> "${GITHUB_OUTPUT}"
 
@@ -246,12 +317,18 @@ jobs:
 
       - name: Notify Django - success
         if: success()
+
         env:
           JOB_ID: ${{ github.event.client_payload.job_id }}
           SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
           VIDEO_URL: ${{ steps.upload.outputs.video_url }}
           CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+
+        shell: bash
+
         run: |
+          set -euo pipefail
+
           echo "Notifying Django of successful render..."
 
           if [ -z "${CALLBACK_URL:-}" ]; then
@@ -259,13 +336,13 @@ jobs:
             exit 1
           fi
 
-          curl --fail-with-body \
-            -sS \
-            -X POST \
-            "${CALLBACK_URL}" \
-            -H "Content-Type: application/json" \
-            -H "X-Callback-Secret: ${SECRET}" \
-            -d "$(jq -n \
+          if [ -z "${VIDEO_URL:-}" ]; then
+            echo "ERROR: VIDEO_URL is empty."
+            exit 1
+          fi
+
+          PAYLOAD=$(
+            jq -n \
               --arg job_id "${JOB_ID}" \
               --arg status "success" \
               --arg video_url "${VIDEO_URL}" \
@@ -274,7 +351,19 @@ jobs:
                 status: $status,
                 video_url: $video_url
               }'
-            )"
+          )
+
+          curl \
+            --fail-with-body \
+            -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "${PAYLOAD}"
+
+          echo ""
+          echo "Django success callback completed."
 
       # ================================================================
       # DJANGO FAILURE CALLBACK
@@ -282,11 +371,17 @@ jobs:
 
       - name: Notify Django - failure
         if: failure()
+
         env:
           JOB_ID: ${{ github.event.client_payload.job_id }}
           SECRET: ${{ secrets.RENDER_CALLBACK_SECRET }}
           CALLBACK_URL: ${{ secrets.DJANGO_CALLBACK_URL }}
+
+        shell: bash
+
         run: |
+          set -euo pipefail
+
           echo "Notifying Django that video rendering failed..."
 
           if [ -z "${CALLBACK_URL:-}" ]; then
@@ -294,17 +389,24 @@ jobs:
             exit 1
           fi
 
-          curl --fail-with-body \
-            -sS \
-            -X POST \
-            "${CALLBACK_URL}" \
-            -H "Content-Type: application/json" \
-            -H "X-Callback-Secret: ${SECRET}" \
-            -d "$(jq -n \
+          PAYLOAD=$(
+            jq -n \
               --arg job_id "${JOB_ID}" \
               --arg status "failed" \
               '{
                 job_id: $job_id,
                 status: $status
               }'
-            )"
+          )
+
+          curl \
+            --fail-with-body \
+            -sS \
+            -X POST \
+            "${CALLBACK_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Callback-Secret: ${SECRET}" \
+            -d "${PAYLOAD}"
+
+          echo ""
+          echo "Django failure callback completed."
