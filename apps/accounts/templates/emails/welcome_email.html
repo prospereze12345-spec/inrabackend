@@ -4,185 +4,221 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
 <title>Welcome to INRA Studio</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;600&display=swap');
+  body, table, td { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  a { color: inherit; }
+  @media screen and (max-width: 600px) {
+    .container { width: 100% !important; }
+    .px { padding-left: 22px !important; padding-right: 22px !important; }
+    .h1 { font-size: 28px !important; }
+    .col { display: block !important; width: 100% !important; padding: 0 0 18px !important; }
+  }
+</style>
 </head>
-<body style="margin:0;padding:0;background:#020814;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#15130F;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
 
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#020814;">
-<tr>
-<td align="center" style="padding:64px 16px;">
-
-<table role="presentation" width="580" cellpadding="0" cellspacing="0" style="max-width:580px;width:100%;">
-
-<!-- Logo -->
-<tr>
-<td align="center" style="padding:0 24px 40px;">
-<img src="{{logo_url}}" alt="" width="40" height="40" style="display:block;border:0;margin:0 auto 12px;">
-<div style="font-size:13px;font-weight:600;letter-spacing:0.08em;color:#5c7086;text-transform:uppercase;">INRA Studio</div>
-</td>
-</tr>
-
-<!-- Hero -->
-<tr>
-<td align="center" style="padding:0 32px;">
-<h1 style="margin:0 0 20px;color:#ffffff;font-size:36px;line-height:1.2;font-weight:600;letter-spacing:-0.02em;">
-Welcome. You just hired<br>a marketing team.
-</h1>
-<p style="margin:0 auto;max-width:440px;color:#a9bccf;font-size:17px;line-height:1.75;">
-Every business starts with one idea, and no time to make it look good. That's what INRA Studio is for. Upload one thing, whatever it is, and walk away with a flyer worth stopping for, a caption worth reading, and a video worth posting.
-</p>
-</td>
-</tr>
-
-<!-- Primary CTA -->
-<tr>
-<td align="center" style="padding:36px 32px 0;">
-<a href="{{dashboard_url}}" style="display:inline-block;background:#3EE3D8;color:#04112a;text-decoration:none;padding:17px 36px;border-radius:14px;font-weight:600;font-size:16px;">
-Open your dashboard
-</a>
-<p style="margin:16px 0 0;color:#5c7086;font-size:13px;">Free to start. No card required.</p>
-</td>
-</tr>
-
-<!-- Divider -->
-<tr>
-<td style="padding:56px 32px 0;">
-<div style="border-top:1px solid #10233d;"></div>
-</td>
-</tr>
-
-<!-- Flowing story section -->
-<tr>
-<td style="padding:44px 32px 0;">
-<h2 style="margin:0 0 18px;color:#ffffff;font-size:22px;font-weight:600;letter-spacing:-0.01em;">
-From one idea to a full campaign, before your coffee's cold
-</h2>
-<p style="margin:0 0 20px;color:#c3cedb;font-size:16px;line-height:1.8;">
-Tell us what you're selling. A product, a service, an event, a business you're just getting off the ground. It doesn't need to be polished. We'll take it from there.
-</p>
-<p style="margin:0 0 20px;color:#c3cedb;font-size:16px;line-height:1.8;">
-You'll get flyer concepts that look like you paid a designer, not templates you have to fight into shape. Captions that sound like your brand actually talking to actual people. And a promo video you can post the same afternoon, not next week.
-</p>
-<p style="margin:0;color:#c3cedb;font-size:16px;line-height:1.8;">
-No design software to learn. No fifteen browser tabs. Just the thing you're trying to say, made to look like you meant it.
-</p>
-</td>
-</tr>
-
-<!-- Quote -->
-<tr>
-<td style="padding:44px 32px 0;">
-<div style="border-left:2px solid #3EE3D8;padding-left:20px;">
-<p style="margin:0;color:#e4ebf1;font-size:17px;line-height:1.75;font-style:italic;">
-I uploaded one product photo and had flyers, captions, and a short promo video before my coffee got cold. It felt like I'd hired a small marketing team overnight.
-</p>
-<p style="margin:14px 0 0;color:#5c7086;font-size:14px;">— an early INRA Studio user, Lagos</p>
-</div>
-</td>
-</tr>
-
-<!-- Closing -->
-<tr>
-<td align="center" style="padding:52px 32px 0;">
-<h2 style="margin:0 0 14px;color:#ffffff;font-size:22px;font-weight:600;letter-spacing:-0.01em;">
-Your first campaign is free. Your next hundred customers might not know you exist yet.
-</h2>
-<p style="margin:0 0 28px;color:#a9bccf;font-size:16px;line-height:1.75;">
-That changes the moment you hit publish.
-</p>
-<a href="{{dashboard_url}}" style="display:inline-block;background:#3EE3D8;color:#04112a;text-decoration:none;padding:16px 34px;border-radius:14px;font-weight:600;font-size:16px;">
-Start creating, free
-</a>
-</td>
-</tr>
-
-<!-- Footer -->
-<tr>
-<td align="center" style="padding:64px 32px 0;">
-<div style="border-top:1px solid #10233d;padding-top:32px;">
-<div style="font-size:13px;font-weight:600;color:#8ea1b5;">INRA Studio</div>
-<div style="margin-top:10px;font-size:13px;line-height:1.7;color:#5c7086;">
-Flyers, captions, and promo video — made in minutes.
+<!-- Preheader -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+Upload one photo. Walk away with a flyer, five captions and a promo video.
 </div>
 
-<!-- Footer -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#15130F;">
 <tr>
-<td align="center"
-style="
-padding:40px 35px;
-border-top:1px solid #102846;">
+<td align="center" style="padding:56px 16px 0;">
 
-<!-- Social Icons -->
-<table cellpadding="0" cellspacing="0" align="center" role="presentation">
-<tr>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" class="container" style="max-width:600px;width:100%;">
 
-<td style="padding:0 8px;">
-<a href="https://facebook.com/inrastudio"
-target="_blank"
-style="text-decoration:none;">
+  <!-- Masthead -->
+  <tr>
+    <td align="center" class="px" style="padding:0 24px 40px;">
+      <span style="display:inline-block;background:#FFC629;color:#15130F;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;font-weight:600;letter-spacing:0.18em;text-transform:uppercase;padding:6px 14px;">
+        Inrastudio
+      </span>
+    </td>
+  </tr>
 
-<img
-src="https://cdn-icons-png.flaticon.com/512/733/733547.png"
-width="24"
-height="24"
-alt="Facebook"
-style="display:block;border:0;">
-</a>
+  <!-- Hero -->
+  <tr>
+    <td align="center" class="px" style="padding:0 32px;">
+      <h1 class="h1" style="margin:0 0 20px;color:#F2EEE2;font-family:'Archivo Black',Arial Black,'Helvetica Neue',Helvetica,sans-serif;font-size:34px;line-height:1.18;font-weight:400;letter-spacing:-0.01em;">
+        Welcome. You just hired a marketing team.
+      </h1>
+      <p style="margin:0 auto;max-width:440px;color:#A79A82;font-size:16px;line-height:1.75;">
+        Every business starts with one idea, and no time to make it look good. That's what Inrastudio is for. Upload one thing, whatever it is, and walk away with a flyer worth stopping for, a caption worth reading, and a video worth posting.
+      </p>
+    </td>
+  </tr>
+
+  <!-- Primary CTA -->
+  <tr>
+    <td align="center" class="px" style="padding:32px 32px 0;">
+      <table role="presentation" cellpadding="0" cellspacing="0">
+        <tr>
+          <td align="center" bgcolor="#FFC629" style="box-shadow:5px 5px 0 0 rgba(0,0,0,0.35);">
+            <a href="{{dashboard_url}}" style="display:inline-block;padding:16px 36px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#15130F;text-decoration:none;">
+              Open your dashboard
+            </a>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:18px 0 0;color:#6b6355;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">
+        Free to start · no card required
+      </p>
+    </td>
+  </tr>
+
+  <!-- Divider -->
+  <tr>
+    <td class="px" style="padding:52px 32px 0;">
+      <div style="border-top:1px dashed rgba(242,238,226,0.18);line-height:0;font-size:0;">&nbsp;</div>
+    </td>
+  </tr>
+
+  <!-- Story -->
+  <tr>
+    <td class="px" style="padding:44px 32px 0;">
+      <h2 style="margin:0 0 16px;color:#F2EEE2;font-family:'Archivo Black',Arial Black,'Helvetica Neue',Helvetica,sans-serif;font-size:21px;font-weight:400;letter-spacing:-0.005em;">
+        From one idea to a full campaign, before your coffee's cold
+      </h2>
+      <p style="margin:0 0 16px;color:#c7bda6;font-size:16px;line-height:1.8;">
+        Tell us what you're selling. A product, a service, an event, a business you're just getting off the ground. It doesn't need to be polished. We'll take it from there.
+      </p>
+      <p style="margin:0;color:#c7bda6;font-size:16px;line-height:1.8;">
+        You'll get flyer concepts that look like you paid a designer, captions that sound like your brand actually talking to actual people, and a promo video you can post the same afternoon — not next week.
+      </p>
+    </td>
+  </tr>
+
+  <!-- Output ticket — mirrors the "generated output" summary on the studio itself -->
+  <tr>
+    <td class="px" style="padding:36px 32px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F2EEE2;">
+        <tr>
+          <td style="padding:16px 22px;border-bottom:1px dashed rgba(21,19,15,0.3);">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-family:'IBM Plex Mono','Courier New',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(21,19,15,0.55);">
+                  What one photo gets you
+                </td>
+                <td align="right" style="font-family:'IBM Plex Mono','Courier New',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#C6371B;font-weight:600;">
+                  #0001
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td class="col" width="33%" style="font-family:'IBM Plex Mono','Courier New',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(21,19,15,0.4);padding-right:12px;">
+                  Flyer<br>
+                  <span style="display:inline-block;margin-top:6px;font-size:20px;font-weight:700;color:#15130F;letter-spacing:0;">01</span>
+                </td>
+                <td class="col" width="33%" style="font-family:'IBM Plex Mono','Courier New',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(21,19,15,0.4);padding-right:12px;">
+                  Captions<br>
+                  <span style="display:inline-block;margin-top:6px;font-size:20px;font-weight:700;color:#15130F;letter-spacing:0;">05</span>
+                </td>
+                <td class="col" width="33%" align="right" style="font-family:'IBM Plex Mono','Courier New',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(21,19,15,0.4);">
+                  Ready<br>
+                  <span style="display:inline-block;margin-top:6px;font-size:20px;font-weight:700;color:#15130F;letter-spacing:0;">~5 MIN</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Quote -->
+  <tr>
+    <td class="px" style="padding:40px 32px 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="3" bgcolor="#FFC629" style="line-height:0;font-size:0;">&nbsp;</td>
+          <td style="padding-left:20px;">
+            <p style="margin:0;color:#e4ddc9;font-size:17px;line-height:1.75;font-style:italic;">
+              I uploaded one product photo and had flyers, captions, and a short promo video before my coffee got cold. It felt like I'd hired a small marketing team overnight.
+            </p>
+            <p style="margin:14px 0 0;color:#6b6355;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;">
+              An early Inrastudio user, Lagos
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- Closing CTA -->
+  <tr>
+    <td align="center" class="px" style="padding:52px 32px 0;">
+      <h2 style="margin:0 0 14px;color:#F2EEE2;font-family:'Archivo Black',Arial Black,'Helvetica Neue',Helvetica,sans-serif;font-size:21px;font-weight:400;letter-spacing:-0.005em;">
+        Your first campaign is free. Your next hundred customers might not know you exist yet.
+      </h2>
+      <p style="margin:0 0 26px;color:#A79A82;font-size:16px;line-height:1.75;">
+        That changes the moment you hit publish.
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0">
+        <tr>
+          <td align="center" bgcolor="#FFC629" style="box-shadow:5px 5px 0 0 rgba(0,0,0,0.35);">
+            <a href="{{dashboard_url}}" style="display:inline-block;padding:15px 34px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;color:#15130F;text-decoration:none;">
+              Start creating, free
+            </a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <tr><td style="padding-top:56px;"></td></tr>
+
+</table>
 </td>
-
-<td style="padding:0 8px;">
-<a href="https://instagram.com/inrastudio"
-target="_blank"
-style="text-decoration:none;">
-
-<img
-src="https://cdn-icons-png.flaticon.com/512/2111/2111463.png"
-width="24"
-height="24"
-alt="Instagram"
-style="display:block;border:0;">
-</a>
-</td>
-
-<td style="padding:0 8px;">
-<a href="https://tiktok.com/@inrastudio"
-target="_blank"
-style="text-decoration:none;">
-
-<img
-src="https://cdn-icons-png.flaticon.com/512/3046/3046121.png"
-width="24"
-height="24"
-alt="TikTok"
-style="display:block;border:0;">
-</a>
-</td>
-
 </tr>
 </table>
 
-<div style="
-margin-top:22px;
-font-size:16px;
-font-weight:600;
-color:#ffffff;">
-INRA Studio
-</div>
+<!-- Footer -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0c0a08;border-top:1px solid rgba(242,238,226,0.08);">
+<tr>
+<td align="center" style="padding:48px 24px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" class="container" style="max-width:600px;width:100%;">
+  <tr>
+    <td align="center" class="px" style="padding:0 24px;">
+      <span style="display:inline-block;font-family:'IBM Plex Mono','Courier New',monospace;font-size:12px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:#F2EEE2;">
+        Inrastudio
+      </span>
 
-<div style="margin-top:18px;font-size:12px;line-height:1.7;color:#42556b;">
-© 2026 INRA Studio. All rights reserved.<br>
-Lagos, Nigeria
-</div>
-</div>
-</td>
-</tr>
+      <p style="margin:12px 0 0;color:#A79A82;font-size:13px;line-height:1.7;">
+        Flyers, captions, and promo video — made in minutes.
+      </p>
 
+      <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px auto 0;">
+        <tr>
+          <td style="padding:0 10px;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">
+            <a href="https://facebook.com/inrastudio" style="color:#A79A82;text-decoration:none;">Facebook</a>
+          </td>
+          <td style="padding:0 10px;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">
+            <a href="https://instagram.com/inrastudio" style="color:#A79A82;text-decoration:none;">Instagram</a>
+          </td>
+          <td style="padding:0 10px;font-family:'IBM Plex Mono','Courier New',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;">
+            <a href="mailto:somtohgist@gmail.com" style="color:#A79A82;text-decoration:none;">Support</a>
+          </td>
+        </tr>
+      </table>
+
+      <p style="margin:28px 0 0;color:#42403a;font-size:12px;line-height:1.7;">
+        © 2026 Inrastudio. All rights reserved.<br>Lagos, Nigeria
+      </p>
+    </td>
+  </tr>
 </table>
-
 </td>
 </tr>
 </table>
 
 </body>
 </html>
-```html

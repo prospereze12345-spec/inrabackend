@@ -1,3 +1,4 @@
+
 import React from "react";
 
 import {
@@ -283,6 +284,290 @@ function springIn(
   });
 }
 
+function hexAlpha(hex: string, alphaHex: string) {
+  return `${hex}${alphaHex}`;
+}
+
+// ============================================================================
+// SCENE TIMING ENGINE
+//
+// A promo video should read like a sequence of cuts, not one static canvas
+// with everything stacked on it. Every "beat" (brand intro, hero, features,
+// benefits, closing) gets the whole frame to itself, and consecutive beats
+// cross-fade/slide into one another over a short shared transition window.
+// Beats with no content (no features, no benefits) are skipped and their
+// time is folded back into the timeline automatically.
+// ============================================================================
+
+const TRANSITION = 14;
+
+type SceneWindow = { start: number; end: number };
+
+function clampFrames(
+  value: number,
+  min: number,
+  max = Infinity
+): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function buildTimeline(
+  total: number,
+  hasFeatures: boolean,
+  hasBenefits: boolean
+) {
+  const brandFrames = clampFrames(total * 0.09, 18, 45);
+  const brand: SceneWindow = { start: 0, end: brandFrames };
+
+  const heroFrames = clampFrames(total * 0.36, 70, total);
+  const hero: SceneWindow = {
+    start: brand.end - TRANSITION,
+    end: brand.end - TRANSITION + heroFrames,
+  };
+
+  let cursor = hero.end;
+
+  let features: SceneWindow | null = null;
+
+  if (hasFeatures) {
+    const featuresFrames = clampFrames(total * 0.17, 45, total);
+
+    features = {
+      start: cursor - TRANSITION,
+      end: cursor - TRANSITION + featuresFrames,
+    };
+
+    cursor = features.end;
+  }
+
+  let benefits: SceneWindow | null = null;
+
+  if (hasBenefits) {
+    const benefitsFrames = clampFrames(total * 0.17, 45, total);
+
+    benefits = {
+      start: cursor - TRANSITION,
+      end: cursor - TRANSITION + benefitsFrames,
+    };
+
+    cursor = benefits.end;
+  }
+
+  const closing: SceneWindow = {
+    start: cursor - TRANSITION,
+    end: Math.max(cursor - TRANSITION + 60, total),
+  };
+
+  return { brand, hero, features, benefits, closing };
+}
+
+function useSceneMotion(
+  window: SceneWindow,
+  transition = TRANSITION
+) {
+  const frame = useCurrentFrame();
+
+  const midpoint = Math.max(
+    window.start + transition,
+    window.end - transition
+  );
+
+  const opacity = interpolate(
+    frame,
+    [window.start, window.start + transition, midpoint, window.end],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  const enterY = interpolate(
+    frame,
+    [window.start, window.start + transition],
+    [28, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  const exitY = interpolate(
+    frame,
+    [midpoint, window.end],
+    [0, -28],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  const mounted = frame >= window.start - 1 && frame <= window.end + 1;
+
+  return { opacity, y: enterY + exitY, mounted };
+}
+
+function Scene({
+  window,
+  zIndex = 5,
+  children,
+}: {
+  window: SceneWindow;
+  zIndex?: number;
+  children: React.ReactNode;
+}) {
+  const { opacity, y, mounted } = useSceneMotion(window);
+
+  if (!mounted) {
+    return null;
+  }
+
+  return (
+    <AbsoluteFill
+      style={{
+        opacity,
+        transform: `translateY(${y}px)`,
+        zIndex,
+        pointerEvents: "none",
+      }}
+    >
+      {children}
+    </AbsoluteFill>
+  );
+}
+
+// ============================================================================
+// SEGMENTED PROGRESS BAR (story-style beat indicator)
+// ============================================================================
+
+function ProgressBar({
+  segments,
+  accent,
+  secondary,
+  side,
+  top,
+}: {
+  segments: SceneWindow[];
+  accent: string;
+  secondary: string;
+  side: number;
+  top: number;
+}) {
+  const frame = useCurrentFrame();
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: top * 0.5,
+        left: side,
+        right: side,
+        display: "flex",
+        gap: 5,
+        zIndex: 95,
+      }}
+    >
+      {segments.map((segment, index) => {
+        const progress = interpolate(
+          frame,
+          [segment.start, Math.max(segment.start + 1, segment.end - TRANSITION)],
+          [0, 100],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+
+        return (
+          <div
+            key={index}
+            style={{
+              flex: 1,
+              height: 2.5,
+              borderRadius: 999,
+              background: hexAlpha(secondary, "20"),
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${progress}%`,
+                height: "100%",
+                background: accent,
+                borderRadius: 999,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================================
+// PERSISTENT BRAND MARK (small watermark that bridges hero -> closing)
+// ============================================================================
+
+function BrandCorner({
+  from,
+  to,
+  brandName,
+  logo,
+  secondary,
+  scale,
+  side,
+  top,
+}: {
+  from: number;
+  to: number;
+  brandName: string;
+  logo: string;
+  secondary: string;
+  scale: number;
+  side: number;
+  top: number;
+}) {
+  const frame = useCurrentFrame();
+
+  const opacity = interpolate(
+    frame,
+    [from, from + TRANSITION, to - TRANSITION, to],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  if (frame < from - 1 || frame > to + 1 || !brandName) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: top * 0.8,
+        left: side,
+        display: "flex",
+        alignItems: "center",
+        gap: 8 * scale,
+        opacity,
+        zIndex: 85,
+      }}
+    >
+      {logo ? (
+        <Img
+          src={logo}
+          style={{
+            width: 24 * scale,
+            height: 24 * scale,
+            objectFit: "contain",
+          }}
+        />
+      ) : null}
+
+      <span
+        style={{
+          fontSize: 10 * scale,
+          fontWeight: 800,
+          letterSpacing: "0.18em",
+          textTransform: "uppercase",
+          color: secondary,
+          opacity: 0.55,
+        }}
+      >
+        {brandName}
+      </span>
+    </div>
+  );
+}
+
 // ============================================================================
 // SECTION TITLE
 // ============================================================================
@@ -291,24 +576,26 @@ function SectionTitle({
   children,
   accent,
   color,
+  scale,
 }: {
   children: React.ReactNode;
   accent: string;
   color: string;
+  scale: number;
 }) {
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 7,
-        marginBottom: 8,
+        gap: 9 * scale,
+        marginBottom: 22 * scale,
       }}
     >
       <div
         style={{
-          width: 16,
-          height: 2,
+          width: 26 * scale,
+          height: 2.5,
           borderRadius: 999,
           background: accent,
           flexShrink: 0,
@@ -317,12 +604,12 @@ function SectionTitle({
 
       <div
         style={{
-          fontSize: 10,
-          fontWeight: 800,
-          letterSpacing: "0.16em",
+          fontSize: 15 * scale,
+          fontWeight: 850,
+          letterSpacing: "0.22em",
           textTransform: "uppercase",
           color,
-          opacity: 0.55,
+          opacity: 0.6,
         }}
       >
         {children}
@@ -332,7 +619,7 @@ function SectionTitle({
 }
 
 // ============================================================================
-// FEATURE ROW
+// FEATURE ROW (full-screen beat, so it gets real breathing room)
 // ============================================================================
 
 function FeatureRow({
@@ -341,7 +628,7 @@ function FeatureRow({
   start,
   accent,
   textColor,
-  width,
+  scale,
   fps,
 }: {
   text: string;
@@ -349,51 +636,40 @@ function FeatureRow({
   start: number;
   accent: string;
   textColor: string;
-  width: number;
+  scale: number;
   fps: number;
 }) {
   const frame = useCurrentFrame();
 
-  const delay = start + index * 5;
+  const delay = start + index * 7;
 
-  const progress = springIn(
-    frame,
-    delay,
-    fps
-  );
+  const progress = springIn(frame, delay, fps);
 
   const opacity = interpolate(
     frame,
-    [delay, delay + 12],
+    [delay, delay + 14],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const x = interpolate(
-    progress,
-    [0, 1],
-    [-18, 0]
-  );
+  const x = interpolate(progress, [0, 1], [-26, 0]);
 
   return (
     <div
       style={{
         display: "flex",
         alignItems: "flex-start",
-        gap: 8,
-        marginBottom: 6,
+        gap: 14 * scale,
+        marginBottom: 22 * scale,
         opacity,
         transform: `translateX(${x}px)`,
       }}
     >
       <div
         style={{
-          width: 6,
-          height: 6,
-          marginTop: 5,
+          width: 10 * scale,
+          height: 10 * scale,
+          marginTop: 8 * scale,
           borderRadius: "50%",
           background: accent,
           flexShrink: 0,
@@ -402,33 +678,32 @@ function FeatureRow({
 
       <div
         style={{
-          fontSize: Math.max(
-            13,
-            Math.round(width * 0.014)
-          ),
+          fontSize: 30 * scale,
           color: textColor,
-          fontWeight: 650,
-          lineHeight: 1.25,
+          fontWeight: 700,
+          lineHeight: 1.22,
+          letterSpacing: "-0.01em",
         }}
       >
-        {clampText(text, 85)}
+        {clampText(text, 60)}
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// BENEFIT CARD
+// BENEFIT ROW (stacked, full width — easier to read in portrait than
+// squeezing three cards side by side)
 // ============================================================================
 
-function BenefitCard({
+function BenefitRow({
   text,
   index,
   start,
   accent,
   textColor,
   primary,
-  width,
+  scale,
   fps,
 }: {
   text: string;
@@ -437,73 +712,129 @@ function BenefitCard({
   accent: string;
   textColor: string;
   primary: string;
-  width: number;
+  scale: number;
   fps: number;
 }) {
   const frame = useCurrentFrame();
 
-  const delay = start + index * 5;
+  const delay = start + index * 7;
 
-  const progress = springIn(
-    frame,
-    delay,
-    fps
-  );
+  const progress = springIn(frame, delay, fps);
 
   const opacity = interpolate(
     frame,
-    [delay, delay + 14],
+    [delay, delay + 16],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const y = interpolate(
-    progress,
-    [0, 1],
-    [12, 0]
-  );
+  const y = interpolate(progress, [0, 1], [18, 0]);
 
   return (
     <div
       style={{
-        flex: 1,
-        minWidth: 0,
-        padding: "9px 10px",
-        borderRadius: 9,
-        border: `1px solid ${textColor}14`,
-        background: `${textColor}07`,
-        boxShadow: `0 7px 20px ${primary}40`,
+        display: "flex",
+        alignItems: "center",
+        gap: 16 * scale,
+        padding: `${16 * scale}px ${18 * scale}px`,
+        borderRadius: 14 * scale,
+        border: `1px solid ${hexAlpha(textColor, "1a")}`,
+        background: hexAlpha(textColor, "08"),
+        boxShadow: `0 ${10 * scale}px ${26 * scale}px ${hexAlpha(primary, "40")}`,
         opacity,
         transform: `translateY(${y}px)`,
+        marginBottom: 16 * scale,
       }}
     >
       <div
         style={{
-          width: 5,
-          height: 5,
+          width: 34 * scale,
+          height: 34 * scale,
           borderRadius: "50%",
-          background: accent,
-          marginBottom: 6,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: hexAlpha(accent, "22"),
+          color: accent,
+          fontWeight: 900,
+          fontSize: 15 * scale,
         }}
-      />
+      >
+        {String(index + 1).padStart(2, "0")}
+      </div>
 
       <div
         style={{
-          fontSize: Math.max(
-            10,
-            Math.round(width * 0.0105)
-          ),
-          lineHeight: 1.25,
+          fontSize: 21 * scale,
+          lineHeight: 1.3,
           fontWeight: 650,
           color: textColor,
-          opacity: 0.82,
+          opacity: 0.9,
         }}
       >
-        {clampText(text, 52)}
+        {clampText(text, 68)}
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// CTA PILL — mirrors the flyer's SmartCTA (icon knockout + accent pill)
+// ============================================================================
+
+function CtaPill({
+  text,
+  primary,
+  accent,
+  scale,
+}: {
+  text: string;
+  primary: string;
+  accent: string;
+  scale: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 12 * scale,
+        padding: `${12 * scale}px ${22 * scale}px ${12 * scale}px ${10 * scale}px`,
+        borderRadius: 999,
+        background: accent,
+        color: primary,
+        boxShadow: `0 ${12 * scale}px ${30 * scale}px ${hexAlpha(accent, "40")}`,
+      }}
+    >
+      <span
+        style={{
+          width: 34 * scale,
+          height: 34 * scale,
+          borderRadius: "50%",
+          background: primary,
+          color: accent,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 16 * scale,
+          flexShrink: 0,
+        }}
+      >
+        →
+      </span>
+
+      <span
+        style={{
+          fontSize: 18 * scale,
+          fontWeight: 900,
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {clampText(text, 40)}
+      </span>
     </div>
   );
 }
@@ -550,12 +881,7 @@ export function PromoVideo({
 }: PromoVideoProps) {
   const frame = useCurrentFrame();
 
-  const {
-    fps,
-    durationInFrames,
-    width,
-    height,
-  } = useVideoConfig();
+  const { fps, durationInFrames, width, height } = useVideoConfig();
 
   // ==========================================================================
   // MEDIA ORIGIN
@@ -567,507 +893,219 @@ export function PromoVideo({
     "https://inrabackend-docker.onrender.com"
   ).replace(/\/+$/, "");
 
-  const resolvedProductImage = resolveAsset(
-    productImage,
-    MEDIA_ORIGIN
-  );
-
-  const resolvedLogo = resolveAsset(
-    logoImage,
-    MEDIA_ORIGIN
-  );
-
-  const resolvedVoiceover = resolveAsset(
-    voiceoverUrl,
-    MEDIA_ORIGIN
-  );
-
-  const resolvedMusic = resolveAsset(
-    musicUrl,
-    MEDIA_ORIGIN
-  );
+  const resolvedProductImage = resolveAsset(productImage, MEDIA_ORIGIN);
+  const resolvedLogo = resolveAsset(logoImage, MEDIA_ORIGIN);
+  const resolvedVoiceover = resolveAsset(voiceoverUrl, MEDIA_ORIGIN);
+  const resolvedMusic = resolveAsset(musicUrl, MEDIA_ORIGIN);
 
   // ==========================================================================
-  // CONTENT
+  // CONTENT FLAGS
   // ==========================================================================
 
   const safeFeatures = safeArray(features);
   const safeBenefits = safeArray(whyChooseUs);
 
-  const hasFeatures =
-    featuresVisible &&
-    safeFeatures.length > 0;
-
-  const hasBenefits =
-    whyChooseUsVisible &&
-    safeBenefits.length > 0;
-
-  const hasCTA =
-    ctaVisible &&
-    Boolean(ctaText?.trim());
-
-  const hasWebsite =
-    websiteVisible &&
-    Boolean(website?.trim());
-
-  const hasPhone =
-    phoneVisible &&
-    Boolean(phone?.trim());
-
-  const hasEmail =
-    emailVisible &&
-    Boolean(email?.trim());
-
-  const hasFooter =
-    hasWebsite ||
-    hasPhone ||
-    hasEmail;
-
-  const hasLogo =
-    Boolean(resolvedLogo);
-
-  const hasBadge =
-    Boolean(
-      badge?.visible &&
-      badge.text?.trim()
-    );
+  const hasFeatures = featuresVisible && safeFeatures.length > 0;
+  const hasBenefits = whyChooseUsVisible && safeBenefits.length > 0;
+  const hasCTA = ctaVisible && Boolean(ctaText?.trim());
+  const hasWebsite = websiteVisible && Boolean(website?.trim());
+  const hasPhone = phoneVisible && Boolean(phone?.trim());
+  const hasEmail = emailVisible && Boolean(email?.trim());
+  const hasFooter = hasWebsite || hasPhone || hasEmail;
+  const hasLogo = Boolean(resolvedLogo);
+  const hasBadge = Boolean(badge?.visible && badge.text?.trim());
 
   // ==========================================================================
   // COLORS
   // ==========================================================================
 
-  const primary =
-    colors?.primary || "#0a0a0a";
-
-  const secondary =
-    colors?.secondary || "#ffffff";
-
-  const accent =
-    colors?.accent || "#c9a84c";
+  const primary = colors?.primary || "#0a0a0a";
+  const secondary = colors?.secondary || "#ffffff";
+  const accent = colors?.accent || "#c9a84c";
 
   // ==========================================================================
   // CANVAS
   // ==========================================================================
 
   const scale = width / 1080;
-
-  const side = Math.round(
-    width * 0.065
-  );
-
-  const top = Math.round(
-    height * 0.035
-  );
-
-  const bottom = Math.round(
-    height * 0.035
-  );
+  const side = Math.round(width * 0.08);
+  const top = Math.round(height * 0.05);
+  const bottom = Math.round(height * 0.05);
 
   // ==========================================================================
-  // CONTENT ZONES
+  // SCENE TIMELINE
   // ==========================================================================
 
-  const headerHeight = Math.round(
-    height * 0.065
+  const timeline = React.useMemo(
+    () => buildTimeline(durationInFrames, hasFeatures, hasBenefits),
+    [durationInFrames, hasFeatures, hasBenefits]
   );
 
-  const productHeight = Math.round(
-    height * 0.20
-  );
-
-  const headlineHeight = Math.round(
-    height * 0.105
-  );
-
-  const descriptionHeight = Math.round(
-    height * 0.075
-  );
-
-  const featuresHeight = hasFeatures
-    ? Math.round(height * 0.115)
-    : 0;
-
-  const benefitsHeight = hasBenefits
-    ? Math.round(height * 0.115)
-    : 0;
-
-  const ctaHeight = hasCTA
-    ? Math.round(height * 0.065)
-    : 0;
-
-  const footerHeight = hasFooter
-    ? Math.round(height * 0.055)
-    : 0;
+  const progressSegments: SceneWindow[] = [
+    timeline.brand,
+    timeline.hero,
+    ...(timeline.features ? [timeline.features] : []),
+    ...(timeline.benefits ? [timeline.benefits] : []),
+    timeline.closing,
+  ];
 
   // ==========================================================================
-  // VERTICAL LAYOUT
-  // ==========================================================================
-
-  let currentY = top;
-
-  const headerY = currentY;
-  currentY += headerHeight;
-
-  const productSectionY = currentY;
-  currentY += productHeight;
-
-  const headlineY = currentY;
-  currentY += headlineHeight;
-
-  const descriptionY = currentY;
-  currentY += descriptionHeight;
-
-  const featuresY = currentY;
-  currentY += featuresHeight;
-
-  const benefitsY = currentY;
-  currentY += benefitsHeight;
-
-  const ctaY = currentY;
-
-  const footerY =
-    height -
-    footerHeight -
-    bottom;
-
-  // ==========================================================================
-  // TIMELINE
-  // ==========================================================================
-
-  const brandStart = 0;
-  const productStart = 12;
-  const headlineStart = 36;
-  const priceStart = 48;
-  const subtextStart = 62;
-  const featuresStart = 82;
-
-  const benefitsStart =
-    featuresStart +
-    Math.max(
-      16,
-      safeFeatures.length * 4
-    );
-
-  const ctaStart =
-    benefitsStart +
-    Math.max(
-      18,
-      safeBenefits.length * 4
-    );
-
-  const footerStart =
-    ctaStart + 12;
-
-  // ==========================================================================
-  // BACKGROUND ANIMATION
+  // BACKGROUND AMBIENCE (persists across every scene)
   // ==========================================================================
 
   const glowProgress = interpolate(
     frame,
     [0, durationInFrames],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const glowScale = interpolate(
-    glowProgress,
-    [0, 1],
-    [1, 1.08]
-  );
+  const glowScale = interpolate(glowProgress, [0, 1], [1, 1.08]);
 
   // ==========================================================================
-  // BRAND INTRO
+  // BRAND INTRO (scene 1)
   // ==========================================================================
 
-  const brandOpacity = interpolate(
-    frame,
-    [0, 7, 20],
-    [0, 1, 0],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
-  );
+  const brandLocalFrame = frame - timeline.brand.start;
 
-  const brandScale = interpolate(
-    frame,
+  const brandIntroScale = interpolate(
+    brandLocalFrame,
     [0, 18],
     [0.8, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
   // ==========================================================================
-  // PRODUCT ANIMATION
+  // HERO (scene 2) — product
   // ==========================================================================
 
+  const productLocalStart = timeline.hero.start + 4;
+
   const productProgress = spring({
-    frame: Math.max(
-      0,
-      frame - productStart
-    ),
+    frame: Math.max(0, frame - productLocalStart),
     fps,
-    config: {
-      damping: 17,
-      stiffness: 100,
-      mass: 0.8,
-    },
+    config: { damping: 17, stiffness: 100, mass: 0.8 },
   });
 
   const productOpacity = interpolate(
     frame,
-    [
-      productStart,
-      productStart + 18,
-    ],
+    [productLocalStart, productLocalStart + 18],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  // IMPORTANT:
-  // This is an animation offset, not the layout position.
-  // Keeping a separate name avoids the original productY
-  // redeclaration bug.
-  const productOffsetY = interpolate(
-    productProgress,
-    [0, 1],
-    [55, 0]
-  );
+  const productOffsetY = interpolate(productProgress, [0, 1], [45, 0]);
+  const productScale = interpolate(productProgress, [0, 1], [0.8, 1]);
 
-  const productScale = interpolate(
-    productProgress,
-    [0, 1],
-    [0.78, 1]
-  );
-
-  const productElapsed = Math.max(
-    0,
-    frame - productStart
-  );
-
-  const productBob =
-    Math.sin(productElapsed / 20) * 2;
-
-  const productRotate =
-    Math.sin(productElapsed / 45) * 0.35;
+  const productElapsed = Math.max(0, frame - productLocalStart);
+  const productBob = Math.sin(productElapsed / 20) * 2;
+  const productRotate = Math.sin(productElapsed / 45) * 0.35;
 
   const cameraProgress = interpolate(
     frame,
-    [
-      productStart,
-      durationInFrames,
-    ],
+    [timeline.hero.start, timeline.hero.end],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const cameraScale = interpolate(
-    cameraProgress,
-    [0, 1],
-    [1, 1.035]
-  );
+  const cameraScale = interpolate(cameraProgress, [0, 1], [1, 1.035]);
 
   // ==========================================================================
-  // HEADLINE
+  // HERO — headline / price / subtext
   // ==========================================================================
 
-  const headlineWords =
-    splitHeadline(headline);
-
-  // ==========================================================================
-  // PRICE
-  // ==========================================================================
+  const headlineWords = splitHeadline(headline);
+  const headlineLocalStart = timeline.hero.start + 16;
+  const priceLocalStart = timeline.hero.start + 30;
+  const subtextLocalStart = timeline.hero.start + 40;
 
   const priceProgress = spring({
-    frame: Math.max(
-      0,
-      frame - priceStart
-    ),
+    frame: Math.max(0, frame - priceLocalStart),
     fps,
-    config: {
-      damping: 12,
-      stiffness: 190,
-      mass: 0.5,
-    },
+    config: { damping: 12, stiffness: 190, mass: 0.5 },
   });
 
   const priceOpacity = interpolate(
     frame,
-    [
-      priceStart,
-      priceStart + 14,
-    ],
+    [priceLocalStart, priceLocalStart + 14],
     [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    }
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const priceScale = interpolate(
-    priceProgress,
-    [0, 1],
-    [0.8, 1]
-  );
+  const priceScale = interpolate(priceProgress, [0, 1], [0.8, 1]);
+
+  const subtextStyle = fadeUp(frame, subtextLocalStart, 16);
 
   // ==========================================================================
-  // DESCRIPTION
+  // HERO — badge
   // ==========================================================================
 
-  const subtextStyle = fadeUp(
-    frame,
-    subtextStart,
-    16
-  );
-
-  // ==========================================================================
-  // CTA
-  // ==========================================================================
-
-  const ctaProgress = hasCTA
-    ? spring({
-        frame: Math.max(
-          0,
-          frame - ctaStart
-        ),
-        fps,
-        config: {
-          damping: 12,
-          stiffness: 180,
-          mass: 0.5,
-        },
-      })
-    : 0;
-
-  const ctaOpacity = hasCTA
-    ? interpolate(
-        frame,
-        [
-          ctaStart,
-          ctaStart + 14,
-        ],
-        [0, 1],
-        {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        }
-      )
-    : 0;
-
-  const ctaScale = hasCTA
-    ? interpolate(
-        ctaProgress,
-        [0, 1],
-        [0.92, 1]
-      )
-    : 1;
-
-  const ctaLine = hasCTA
-    ? interpolate(
-        frame,
-        [
-          ctaStart + 5,
-          ctaStart + 22,
-        ],
-        [0, 100],
-        {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-        }
-      )
-    : 0;
-
-  // ==========================================================================
-  // FOOTER
-  // ==========================================================================
-
-  const footerStyle = fadeUp(
-    frame,
-    footerStart,
-    16
-  );
-
-  // ==========================================================================
-  // BADGE
-  // ==========================================================================
+  const badgeLocalStart = timeline.hero.start + 22;
 
   const badgeProgress = spring({
-    frame: Math.max(
-      0,
-      frame - (productStart + 18)
-    ),
+    frame: Math.max(0, frame - badgeLocalStart),
     fps,
-    config: {
-      damping: 10,
-      stiffness: 210,
-      mass: 0.5,
-    },
+    config: { damping: 10, stiffness: 210, mass: 0.5 },
   });
 
   const badgeScale = badge
-    ? badge.transform.scale *
-      interpolate(
-        badgeProgress,
-        [0, 1],
-        [0.5, 1]
-      )
+    ? badge.transform.scale * interpolate(badgeProgress, [0, 1], [0.5, 1])
     : 1;
+
+  // ==========================================================================
+  // FEATURES (scene 3)
+  // ==========================================================================
+
+  const featuresLocalStart = (timeline.features?.start ?? 0) + 18;
+
+  // ==========================================================================
+  // BENEFITS (scene 4)
+  // ==========================================================================
+
+  const benefitsLocalStart = (timeline.benefits?.start ?? 0) + 18;
+
+  // ==========================================================================
+  // CLOSING (scene 5) — CTA / footer
+  // ==========================================================================
+
+  const ctaLocalStart = timeline.closing.start + 12;
+  const footerLocalStart = timeline.closing.start + 26;
+
+  const ctaProgress = spring({
+    frame: Math.max(0, frame - ctaLocalStart),
+    fps,
+    config: { damping: 12, stiffness: 180, mass: 0.5 },
+  });
+
+  const ctaOpacity = interpolate(
+    frame,
+    [ctaLocalStart, ctaLocalStart + 14],
+    [0, 1],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  const ctaScale = interpolate(ctaProgress, [0, 1], [0.9, 1]);
+
+  const footerStyle = fadeUp(frame, footerLocalStart, 16);
+
+  const closingPriceStyle = fadeUp(frame, timeline.closing.start + 4, 14);
 
   // ==========================================================================
   // AUDIO
   // ==========================================================================
 
-  const musicBaseVolume = Math.max(
-    0,
-    Math.min(
-      1,
-      Number(musicVolume ?? 0.12)
-    )
-  );
+  const musicBaseVolume = Math.max(0, Math.min(1, Number(musicVolume ?? 0.12)));
+  const musicFadeStart = Math.max(0, durationInFrames - 30);
 
-  const musicFadeStart = Math.max(
-    0,
-    durationInFrames - 30
-  );
-
-  const musicVolumeAtFrame = (
-    audioFrame: number
-  ) => {
+  const musicVolumeAtFrame = (audioFrame: number) => {
     const fade = interpolate(
       audioFrame,
-      [
-        0,
-        15,
-        musicFadeStart,
-        durationInFrames,
-      ],
-      [
-        0,
-        musicBaseVolume,
-        musicBaseVolume,
-        0,
-      ],
-      {
-        extrapolateLeft: "clamp",
-        extrapolateRight: "clamp",
-      }
+      [0, 15, musicFadeStart, durationInFrames],
+      [0, musicBaseVolume, musicBaseVolume, 0],
+      { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
-    return Math.min(
-      musicBaseVolume,
-      fade
-    );
+    return Math.min(musicBaseVolume, fade);
   };
 
   // ==========================================================================
@@ -1088,29 +1126,17 @@ export function PromoVideo({
       {/* AUDIO */}
       {/* ================================================================== */}
 
-      {resolvedVoiceover ? (
-        <Audio
-          src={resolvedVoiceover}
-          volume={1}
-        />
-      ) : null}
+      {resolvedVoiceover ? <Audio src={resolvedVoiceover} volume={1} /> : null}
 
       {resolvedMusic ? (
-        <Audio
-          src={resolvedMusic}
-          volume={musicVolumeAtFrame}
-        />
+        <Audio src={resolvedMusic} volume={musicVolumeAtFrame} />
       ) : null}
 
       {/* ================================================================== */}
-      {/* BACKGROUND */}
+      {/* AMBIENT BACKGROUND (persists across the whole ad) */}
       {/* ================================================================== */}
 
-      <AbsoluteFill
-        style={{
-          pointerEvents: "none",
-        }}
-      >
+      <AbsoluteFill style={{ pointerEvents: "none" }}>
         <div
           style={{
             position: "absolute",
@@ -1119,8 +1145,10 @@ export function PromoVideo({
             right: -280 * scale,
             top: -260 * scale,
             borderRadius: "50%",
-            background:
-              `radial-gradient(circle, ${accent}22 0%, ${accent}08 32%, transparent 72%)`,
+            background: `radial-gradient(circle, ${hexAlpha(accent, "22")} 0%, ${hexAlpha(
+              accent,
+              "08"
+            )} 32%, transparent 72%)`,
             transform: `scale(${glowScale})`,
           }}
         />
@@ -1133,8 +1161,7 @@ export function PromoVideo({
             left: -260 * scale,
             bottom: -250 * scale,
             borderRadius: "50%",
-            background:
-              `radial-gradient(circle, ${accent}14 0%, transparent 72%)`,
+            background: `radial-gradient(circle, ${hexAlpha(accent, "14")} 0%, transparent 72%)`,
           }}
         />
 
@@ -1145,39 +1172,55 @@ export function PromoVideo({
             bottom: 0,
             left: "50%",
             width: 1,
-            background:
-              `linear-gradient(to bottom, transparent, ${accent}12, transparent)`,
+            background: `linear-gradient(to bottom, transparent, ${hexAlpha(
+              accent,
+              "12"
+            )}, transparent)`,
           }}
         />
       </AbsoluteFill>
 
       {/* ================================================================== */}
-      {/* BRAND INTRO */}
+      {/* BEAT PROGRESS + PERSISTENT BRAND MARK */}
       {/* ================================================================== */}
 
-      {brandName ? (
-        <AbsoluteFill
-          style={{
-            alignItems: "center",
-            justifyContent: "center",
-            opacity: brandOpacity,
-            pointerEvents: "none",
-            zIndex: 90,
-          }}
-        >
+      <ProgressBar
+        segments={progressSegments}
+        accent={accent}
+        secondary={secondary}
+        side={side}
+        top={top}
+      />
+
+      <BrandCorner
+        from={timeline.hero.start}
+        to={timeline.closing.start}
+        brandName={brandName}
+        logo={resolvedLogo}
+        secondary={secondary}
+        scale={scale}
+        side={side}
+        top={top}
+      />
+
+      {/* ================================================================== */}
+      {/* SCENE 1 — BRAND INTRO */}
+      {/* ================================================================== */}
+
+      <Scene window={timeline.brand} zIndex={90}>
+        <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
           <div
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               gap: 9,
-              transform:
-                `scale(${brandScale})`,
+              transform: `scale(${brandIntroScale})`,
             }}
           >
             <div
               style={{
-                fontSize: 14 * scale,
+                fontSize: 15 * scale,
                 fontWeight: 850,
                 letterSpacing: "0.30em",
                 textTransform: "uppercase",
@@ -1187,680 +1230,418 @@ export function PromoVideo({
               {brandName}
             </div>
 
-            <div
-              style={{
-                width: 55 * scale,
-                height: 2,
-                background: accent,
-              }}
-            />
+            <div style={{ width: 55 * scale, height: 2, background: accent }} />
           </div>
         </AbsoluteFill>
-      ) : null}
+      </Scene>
 
       {/* ================================================================== */}
-      {/* MAIN CONTENT */}
+      {/* SCENE 2 — HERO (product / headline / price / subtext) */}
       {/* ================================================================== */}
 
-      <AbsoluteFill
-        style={{
-          zIndex: 5,
-        }}
-      >
-        {/* ================================================================ */}
-        {/* HEADER */}
-        {/* ================================================================ */}
-
-        <div
+      <Scene window={timeline.hero} zIndex={10}>
+        <AbsoluteFill
           style={{
-            position: "absolute",
-            top: headerY,
-            left: side,
-            right: side,
-            height: headerHeight,
+            paddingLeft: side,
+            paddingRight: side,
+            paddingTop: top * 1.8,
+            paddingBottom: bottom,
             display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            zIndex: 20,
+            flexDirection: "column",
           }}
         >
-          {brandName ? (
-            <div
-              style={{
-                fontSize: 10 * scale,
-                fontWeight: 800,
-                letterSpacing: "0.18em",
-                textTransform: "uppercase",
-                color: secondary,
-                opacity: 0.5,
-              }}
-            >
-              {brandName}
-            </div>
-          ) : (
-            <div />
-          )}
+          {/* Product */}
 
-          {hasLogo ? (
-            <Img
-              src={resolvedLogo}
-              style={{
-                width: 46 * scale,
-                height: 46 * scale,
-                objectFit: "contain",
-              }}
-            />
-          ) : null}
-        </div>
-
-        {/* ================================================================ */}
-        {/* PRODUCT */}
-        {/* ================================================================ */}
-
-        <div
-          style={{
-            position: "absolute",
-            top: productSectionY,
-            left: side,
-            right: side,
-            height: productHeight,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            opacity: productOpacity,
-            transform:
-              `translateY(${productOffsetY + productBob}px) scale(${productScale}) rotate(${productRotate}deg)`,
-            zIndex: 4,
-          }}
-        >
           <div
             style={{
-              position: "absolute",
-              width: "68%",
-              height: "90%",
-              borderRadius: "50%",
-              background:
-                `radial-gradient(circle, ${accent}18 0%, transparent 68%)`,
-              filter: "blur(18px)",
-            }}
-          />
-
-          {resolvedProductImage ? (
-            <Img
-              src={resolvedProductImage}
-              style={{
-                maxWidth: "60%",
-                maxHeight: "92%",
-                objectFit: "contain",
-                transform:
-                  `scale(${cameraScale})`,
-                filter:
-                  "drop-shadow(0 22px 40px rgba(0,0,0,0.65))",
-              }}
-            />
-          ) : (
-            <div
-              style={{
-                width: 150 * scale,
-                height: 150 * scale,
-                borderRadius: 26,
-                border:
-                  `1px solid ${accent}44`,
-                background:
-                  `${accent}12`,
-              }}
-            />
-          )}
-        </div>
-
-        {/* ================================================================ */}
-        {/* BADGE */}
-        {/* ================================================================ */}
-
-        {hasBadge && badge ? (
-          <div
-            style={{
-              position: "absolute",
-              right: side * 0.1,
-              top:
-                productSectionY +
-                productHeight * 0.1,
-              width: 94 * scale,
-              height: 94 * scale,
-              transform:
-                `translate(${badge.transform.x}px, ${badge.transform.y}px) scale(${badgeScale}) rotate(-8deg)`,
-              zIndex: 25,
+              position: "relative",
+              flex: "1 1 auto",
+              minHeight: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              opacity: productOpacity,
+              transform: `translateY(${productOffsetY + productBob}px) scale(${productScale}) rotate(${productRotate}deg)`,
             }}
           >
             <div
               style={{
                 position: "absolute",
-                inset: 0,
+                width: "72%",
+                height: "88%",
                 borderRadius: "50%",
-                background: badge.bgColor,
-                boxShadow:
-                  "0 15px 35px rgba(0,0,0,0.4)",
+                background: `radial-gradient(circle, ${hexAlpha(accent, "18")} 0%, transparent 68%)`,
+                filter: "blur(18px)",
               }}
             />
 
-            <div
-              style={{
-                position: "absolute",
-                inset: 7,
-                border:
-                  `1px dashed ${badge.textColor}80`,
-                borderRadius: "50%",
-              }}
-            />
-
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: 10,
-                boxSizing: "border-box",
-              }}
-            >
+            {resolvedProductImage ? (
+              <Img
+                src={resolvedProductImage}
+                style={{
+                  maxWidth: "70%",
+                  maxHeight: "94%",
+                  objectFit: "contain",
+                  transform: `scale(${cameraScale})`,
+                  filter: "drop-shadow(0 22px 40px rgba(0,0,0,0.65))",
+                }}
+              />
+            ) : (
               <div
                 style={{
-                  fontSize: 20 * scale,
-                  fontWeight: 950,
-                  color: badge.textColor,
-                  lineHeight: 1,
-                  textAlign: "center",
+                  width: 170 * scale,
+                  height: 170 * scale,
+                  borderRadius: 28,
+                  border: `1px solid ${hexAlpha(accent, "44")}`,
+                  background: hexAlpha(accent, "12"),
+                }}
+              />
+            )}
+
+            {hasBadge && badge ? (
+              <div
+                style={{
+                  position: "absolute",
+                  right: "4%",
+                  top: "6%",
+                  width: 100 * scale,
+                  height: 100 * scale,
+                  transform: `translate(${badge.transform.x}px, ${badge.transform.y}px) scale(${badgeScale}) rotate(-8deg)`,
                 }}
               >
-                {clampText(
-                  badge.text,
-                  18
-                )}
-              </div>
-
-              {badge.subText ? (
                 <div
                   style={{
-                    marginTop: 4,
-                    fontSize: 8 * scale,
-                    fontWeight: 800,
-                    letterSpacing: "0.08em",
-                    color: badge.textColor,
-                    opacity: 0.85,
-                    textAlign: "center",
+                    position: "absolute",
+                    inset: 0,
+                    borderRadius: "50%",
+                    background: badge.bgColor,
+                    boxShadow: "0 15px 35px rgba(0,0,0,0.4)",
+                  }}
+                />
+
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 7,
+                    border: `1px dashed ${hexAlpha(badge.textColor, "80")}`,
+                    borderRadius: "50%",
+                  }}
+                />
+
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 10,
+                    boxSizing: "border-box",
                   }}
                 >
-                  {clampText(
-                    badge.subText,
-                    25
-                  )}
+                  <div
+                    style={{
+                      fontSize: 20 * scale,
+                      fontWeight: 950,
+                      color: badge.textColor,
+                      lineHeight: 1,
+                      textAlign: "center",
+                    }}
+                  >
+                    {clampText(badge.text, 18)}
+                  </div>
+
+                  {badge.subText ? (
+                    <div
+                      style={{
+                        marginTop: 4,
+                        fontSize: 8 * scale,
+                        fontWeight: 800,
+                        letterSpacing: "0.08em",
+                        color: badge.textColor,
+                        opacity: 0.85,
+                        textAlign: "center",
+                      }}
+                    >
+                      {clampText(badge.subText, 25)}
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
 
-        {/* ================================================================ */}
-        {/* HEADLINE */}
-        {/* ================================================================ */}
+          {/* Headline */}
 
-        <div
-          style={{
-            position: "absolute",
-            top: headlineY,
-            left: side,
-            right: side,
-            height: headlineHeight,
-            zIndex: 10,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: "96%",
-              lineHeight: 0.98,
-            }}
-          >
-            {headlineWords.map(
-              (word, index) => {
-                const delay =
-                  headlineStart +
-                  index * 3;
+          <div style={{ flex: "0 0 auto", overflow: "hidden" }}>
+            <div style={{ maxWidth: "96%", lineHeight: 0.98 }}>
+              {headlineWords.map((word, index) => {
+                const delay = headlineLocalStart + index * 3;
 
-                const progress =
-                  springIn(
-                    frame,
-                    delay,
-                    fps
-                  );
+                const progress = springIn(frame, delay, fps);
 
-                const opacity =
-                  interpolate(
-                    frame,
-                    [
-                      delay,
-                      delay + 9,
-                    ],
-                    [0, 1],
-                    {
-                      extrapolateLeft:
-                        "clamp",
-                      extrapolateRight:
-                        "clamp",
-                    }
-                  );
+                const opacity = interpolate(
+                  frame,
+                  [delay, delay + 9],
+                  [0, 1],
+                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+                );
 
-                const y =
-                  interpolate(
-                    progress,
-                    [0, 1],
-                    [18, 0]
-                  );
+                const y = interpolate(progress, [0, 1], [18, 0]);
 
                 return (
                   <span
                     key={`${word}-${index}`}
                     style={{
-                      display:
-                        "inline-block",
-                      marginRight:
-                        6 * scale,
+                      display: "inline-block",
+                      marginRight: 8 * scale,
                       marginBottom: 2,
-                      fontSize:
-                        Math.max(
-                          26,
-                          Math.round(
-                            width * 0.03
-                          )
-                        ),
+                      fontSize: Math.max(30, Math.round(width * 0.036)),
                       fontWeight: 950,
-                      letterSpacing:
-                        "-0.045em",
-                      color:
-                        index === 0
-                          ? accent
-                          : secondary,
+                      letterSpacing: "-0.045em",
+                      color: index === 0 ? accent : secondary,
                       opacity,
-                      transform:
-                        `translateY(${y}px)`,
+                      transform: `translateY(${y}px)`,
                     }}
                   >
                     {word}
                   </span>
                 );
-              }
-            )}
-          </div>
-        </div>
-
-        {/* ================================================================ */}
-        {/* PRICE */}
-        {/* ================================================================ */}
-
-        {price ? (
-          <div
-            style={{
-              position: "absolute",
-              top:
-                headlineY +
-                headlineHeight -
-                Math.round(
-                  height * 0.012
-                ),
-              left: side,
-              opacity: priceOpacity,
-              transform:
-                `scale(${priceScale})`,
-              transformOrigin:
-                "left center",
-              zIndex: 11,
-            }}
-          >
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <div
-                style={{
-                  width: 18,
-                  height: 2,
-                  background: accent,
-                }}
-              />
-
-              <span
-                style={{
-                  fontSize:
-                    Math.max(
-                      21,
-                      Math.round(
-                        width * 0.025
-                      )
-                    ),
-                  fontWeight: 950,
-                  letterSpacing:
-                    "-0.04em",
-                  color: accent,
-                }}
-              >
-                {clampText(
-                  price,
-                  35
-                )}
-              </span>
+              })}
             </div>
           </div>
-        ) : null}
 
-        {/* ================================================================ */}
-        {/* DESCRIPTION */}
-        {/* ================================================================ */}
+          {/* Price */}
 
-        {subtext ? (
-          <div
-            style={{
-              position: "absolute",
-              top: descriptionY,
-              left: side,
-              right: side,
-              height: descriptionHeight,
-              maxWidth: "90%",
-              fontSize:
-                Math.max(
-                  12,
-                  Math.round(
-                    width * 0.012
-                  )
-                ),
-              lineHeight: 1.35,
-              color: secondary,
-              opacity:
-                Number(
-                  subtextStyle.opacity
-                ) * 0.75,
-              transform:
-                subtextStyle.transform,
-              zIndex: 10,
-              overflow: "hidden",
-            }}
-          >
-            {clampText(
-              subtext,
-              180
-            )}
-          </div>
-        ) : null}
-
-        {/* ================================================================ */}
-        {/* FEATURES */}
-        {/* ================================================================ */}
-
-        {hasFeatures ? (
-          <div
-            style={{
-              position: "absolute",
-              top: featuresY,
-              left: side,
-              right: side,
-              height: featuresHeight,
-              zIndex: 10,
-              overflow: "hidden",
-            }}
-          >
-            <SectionTitle
-              accent={accent}
-              color={secondary}
-            >
-              Features
-            </SectionTitle>
-
-            {safeFeatures.map(
-              (feature, index) => (
-                <FeatureRow
-                  key={`feature-${index}`}
-                  text={feature}
-                  index={index}
-                  start={featuresStart}
-                  accent={accent}
-                  textColor={secondary}
-                  width={width}
-                  fps={fps}
-                />
-              )
-            )}
-          </div>
-        ) : null}
-
-        {/* ================================================================ */}
-        {/* WHY CHOOSE US */}
-        {/* ================================================================ */}
-
-        {hasBenefits ? (
-          <div
-            style={{
-              position: "absolute",
-              top: benefitsY,
-              left: side,
-              right: side,
-              height: benefitsHeight,
-              zIndex: 10,
-              overflow: "hidden",
-            }}
-          >
-            <SectionTitle
-              accent={accent}
-              color={secondary}
-            >
-              Why Choose Us
-            </SectionTitle>
-
+          {price ? (
             <div
               style={{
-                display: "flex",
-                gap: 8,
-                width: "100%",
+                flex: "0 0 auto",
+                marginTop: 10 * scale,
+                opacity: priceOpacity,
+                transform: `scale(${priceScale})`,
+                transformOrigin: "left center",
               }}
             >
-              {safeBenefits.map(
-                (benefit, index) => (
-                  <BenefitCard
-                    key={`benefit-${index}`}
-                    text={benefit}
-                    index={index}
-                    start={benefitsStart}
-                    accent={accent}
-                    textColor={secondary}
-                    primary={primary}
-                    width={width}
-                    fps={fps}
-                  />
-                )
-              )}
-            </div>
-          </div>
-        ) : null}
-
-        {/* ================================================================ */}
-        {/* CTA */}
-        {/* ================================================================ */}
-
-        {hasCTA ? (
-          <div
-            style={{
-              position: "absolute",
-              left: side,
-              right: side,
-              top: ctaY,
-              height: ctaHeight,
-              opacity: ctaOpacity,
-              transform:
-                `scale(${ctaScale})`,
-              transformOrigin:
-                "left center",
-              zIndex: 15,
-            }}
-          >
-            <div
-              style={{
-                display: "inline-flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize:
-                      14 * scale,
-                    fontWeight: 900,
-                    letterSpacing:
-                      "0.07em",
-                    textTransform:
-                      "uppercase",
-                    color: secondary,
-                  }}
-                >
-                  {clampText(
-                    ctaText,
-                    60
-                  )}
-                </span>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 18, height: 2, background: accent }} />
 
                 <span
                   style={{
-                    fontSize:
-                      16 * scale,
+                    fontSize: Math.max(22, Math.round(width * 0.028)),
+                    fontWeight: 950,
+                    letterSpacing: "-0.04em",
                     color: accent,
                   }}
                 >
-                  →
+                  {clampText(price, 35)}
                 </span>
               </div>
-
-              <div
-                style={{
-                  height: 2,
-                  width: `${ctaLine}%`,
-                  background: accent,
-                  borderRadius: 3,
-                }}
-              />
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {/* ================================================================ */}
-        {/* FOOTER */}
-        {/* ================================================================ */}
+          {/* Subtext */}
 
-        {hasFooter ? (
-          <div
+          {subtext ? (
+            <div
+              style={{
+                flex: "0 0 auto",
+                marginTop: 10 * scale,
+                maxWidth: "90%",
+                fontSize: Math.max(14, Math.round(width * 0.015)),
+                lineHeight: 1.4,
+                color: secondary,
+                opacity: Number(subtextStyle.opacity) * 0.75,
+                transform: subtextStyle.transform,
+              }}
+            >
+              {clampText(subtext, 160)}
+            </div>
+          ) : null}
+        </AbsoluteFill>
+      </Scene>
+
+      {/* ================================================================== */}
+      {/* SCENE 3 — FEATURES */}
+      {/* ================================================================== */}
+
+      {timeline.features ? (
+        <Scene window={timeline.features} zIndex={10}>
+          <AbsoluteFill
             style={{
-              position: "absolute",
-              left: side,
-              right: side,
-              top: footerY,
-              height: footerHeight,
+              paddingLeft: side,
+              paddingRight: side,
               display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "7px 10px",
-              borderRadius: 9,
-              border:
-                `1px solid ${secondary}16`,
-              background:
-                `${secondary}05`,
-              opacity:
-                footerStyle.opacity,
-              transform:
-                footerStyle.transform,
-              zIndex: 20,
-              overflow: "hidden",
-              boxSizing: "border-box",
+              flexDirection: "column",
+              justifyContent: "center",
             }}
           >
-            {hasWebsite ? (
-              <span
+            <SectionTitle accent={accent} color={secondary} scale={scale}>
+              Features
+            </SectionTitle>
+
+            {safeFeatures.map((feature, index) => (
+              <FeatureRow
+                key={`feature-${index}`}
+                text={feature}
+                index={index}
+                start={featuresLocalStart}
+                accent={accent}
+                textColor={secondary}
+                scale={scale}
+                fps={fps}
+              />
+            ))}
+          </AbsoluteFill>
+        </Scene>
+      ) : null}
+
+      {/* ================================================================== */}
+      {/* SCENE 4 — WHY CHOOSE US */}
+      {/* ================================================================== */}
+
+      {timeline.benefits ? (
+        <Scene window={timeline.benefits} zIndex={10}>
+          <AbsoluteFill
+            style={{
+              paddingLeft: side,
+              paddingRight: side,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+            }}
+          >
+            <SectionTitle accent={accent} color={secondary} scale={scale}>
+              Why Choose Us
+            </SectionTitle>
+
+            {safeBenefits.map((benefit, index) => (
+              <BenefitRow
+                key={`benefit-${index}`}
+                text={benefit}
+                index={index}
+                start={benefitsLocalStart}
+                accent={accent}
+                textColor={secondary}
+                primary={primary}
+                scale={scale}
+                fps={fps}
+              />
+            ))}
+          </AbsoluteFill>
+        </Scene>
+      ) : null}
+
+      {/* ================================================================== */}
+      {/* SCENE 5 — CLOSING (CTA + contact) */}
+      {/* ================================================================== */}
+
+      <Scene window={timeline.closing} zIndex={15}>
+        <AbsoluteFill
+          style={{
+            paddingLeft: side,
+            paddingRight: side,
+            paddingBottom: bottom,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: 22 * scale,
+          }}
+        >
+          {price ? (
+            <div
+              style={{
+                opacity: closingPriceStyle.opacity,
+                transform: closingPriceStyle.transform,
+              }}
+            >
+              <div
                 style={{
-                  fontSize: 9 * scale,
-                  color: secondary,
-                  opacity: 0.65,
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
+                  fontSize: Math.max(30, Math.round(width * 0.045)),
+                  fontWeight: 950,
+                  letterSpacing: "-0.04em",
+                  color: accent,
                 }}
               >
-                {website}
-              </span>
-            ) : null}
+                {clampText(price, 35)}
+              </div>
+            </div>
+          ) : null}
 
-            {hasPhone ? (
-              <>
-                <span
-                  style={{
-                    width: 3,
-                    height: 3,
-                    borderRadius: "50%",
-                    background: accent,
-                    flexShrink: 0,
-                  }}
-                />
+          {hasCTA ? (
+            <div
+              style={{
+                opacity: ctaOpacity,
+                transform: `scale(${ctaScale})`,
+                transformOrigin: "left center",
+              }}
+            >
+              <CtaPill text={ctaText} primary={primary} accent={accent} scale={scale} />
+            </div>
+          ) : null}
 
-                <span
-                  style={{
-                    fontSize: 9 * scale,
-                    color: secondary,
-                    opacity: 0.55,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {phone}
+          {hasFooter ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 12 * scale,
+                padding: `${10 * scale}px ${14 * scale}px`,
+                borderRadius: 12 * scale,
+                border: `1px solid ${hexAlpha(secondary, "16")}`,
+                background: hexAlpha(secondary, "05"),
+                opacity: footerStyle.opacity,
+                transform: footerStyle.transform,
+                width: "fit-content",
+                maxWidth: "100%",
+                boxSizing: "border-box",
+              }}
+            >
+              {hasWebsite ? (
+                <span style={{ fontSize: 13 * scale, color: secondary, opacity: 0.7 }}>
+                  {website}
                 </span>
-              </>
-            ) : null}
+              ) : null}
 
-            {hasEmail ? (
-              <>
-                <span
-                  style={{
-                    width: 3,
-                    height: 3,
-                    borderRadius: "50%",
-                    background: accent,
-                    flexShrink: 0,
-                  }}
-                />
+              {hasPhone ? (
+                <>
+                  <span
+                    style={{
+                      width: 4,
+                      height: 4,
+                      borderRadius: "50%",
+                      background: accent,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontSize: 13 * scale, color: secondary, opacity: 0.6 }}>
+                    {phone}
+                  </span>
+                </>
+              ) : null}
 
-                <span
-                  style={{
-                    fontSize: 9 * scale,
-                    color: secondary,
-                    opacity: 0.55,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {email}
-                </span>
-              </>
-            ) : null}
-          </div>
-        ) : null}
-      </AbsoluteFill>
+              {hasEmail ? (
+                <>
+                  <span
+                    style={{
+                      width: 4,
+                      height: 4,
+                      borderRadius: "50%",
+                      background: accent,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontSize: 13 * scale, color: secondary, opacity: 0.6 }}>
+                    {email}
+                  </span>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </AbsoluteFill>
+      </Scene>
     </AbsoluteFill>
   );
 }
