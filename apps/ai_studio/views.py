@@ -101,17 +101,7 @@ class JobResultView(APIView):
             if raw_captions.get(key)
         ]
 
-        # job.flyer_props holds user customizations (colors, badge, template
-        # choice); job.captions["flyer"] holds AI-generated marketing copy
-        # (headline, features, whyChooseUs, contact info, etc). Both need to
-        # be merged here — the same way build_promo_props() merges them for
-        # the flyer PNG — or the editor (and anything exported from it,
-        # including video) silently loses everything that only lives in
-        # captions["flyer"].
-        flyer_captions = (job.captions or {}).get("flyer", {}) or {}
-
         flyer = {
-            **flyer_captions,
             **(job.flyer_props or {}),
             "productImage": self._absolute_url(request, job.image_nobg) or "",
         }
@@ -152,20 +142,17 @@ class RecentCampaignsView(APIView):
             .order_by("-created_at")[:20]
         )
 
-        def _field(job, key):
-            flyer_captions = (job.captions or {}).get("flyer", {}) or {}
-            return (job.flyer_props or {}).get(key) or flyer_captions.get(key)
-
         results = [
             {
                 "job_id": str(job.id),
-                "headline": _field(job, "headline"),
+                "headline": (job.flyer_props or {}).get("headline"),
                 "png_url": self._absolute_url(request, job.image_nobg),
-                "template_category": _field(job, "templateCategory"),
+                "template_category": (job.flyer_props or {}).get("templateCategory"),
                 "created_at": job.created_at.isoformat(),
             }
             for job in jobs
         ]
+
         return Response(results, status=status.HTTP_200_OK)
 
 @csrf_exempt
