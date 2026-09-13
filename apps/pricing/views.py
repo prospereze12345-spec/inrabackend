@@ -45,7 +45,11 @@ class PricingViewSet(viewsets.ViewSet):
     def webhook(self, request):
         try:
             payment_service = PaymentService()
-            signature = request.headers.get("verif-hash")
+            # Which header carries the signature depends on the active
+            # gateway (Paystack: x-paystack-signature, Flutterwave:
+            # verif-hash) -- the provider itself knows which one, so we
+            # don't hardcode a gateway's header name here.
+            signature = request.headers.get(payment_service.provider.signature_header_name)
             result = payment_service.process_webhook(request.body, signature)
             return Response(result)
         except Exception as e:
@@ -101,12 +105,17 @@ class PricingViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
     def verify_payment(self, request):
         transaction_id = request.data.get("transaction_id")
-        flutterwave_transaction_id = request.data.get("flutterwave_transaction_id")
+        # Paystack verifies by the reference we generated at
+        # initiate_payment time, so no gateway-side id is required from the
+        # client. Accept either key so the frontend doesn't need to change
+        # again when Flutterwave (which *does* need its own transaction id
+        # to verify) comes back.
+        provider_transaction_id = request.data.get("provider_transaction_id") or request.data.get(
+            "flutterwave_transaction_id"
+        )
 
         if not transaction_id:
             return Response({"error": "transaction_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-        if not flutterwave_transaction_id:
-            return Response({"error": "flutterwave_transaction_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             transaction_obj = Transaction.objects.get(id=transaction_id, user=request.user)
@@ -116,7 +125,7 @@ class PricingViewSet(viewsets.ViewSet):
         try:
             result = PaymentService().verify_payment(
                 transaction_id=transaction_obj.id,
-                flutterwave_transaction_id=flutterwave_transaction_id,
+                flutterwave_transaction_id=provider_transaction_id,
             )
             return Response({
                 "status": result["status"],

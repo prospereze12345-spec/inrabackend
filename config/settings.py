@@ -278,3 +278,10 @@ QSTASH_FAILURE_CALLBACK_URL = f"{SITE_URL}/api/campaign/qstash/failure/"
 REMOVE_BG_API_KEY = os.environ.get("REMOVE_BG_API_KEY")
 PIXIAN_API_ID = os.environ.get("PIXIAN_API_ID")
 PIXIAN_API_SECRET = os.environ.get("PIXIAN_API_SECRET")
+
+
+PAYMENT_PROVIDER = os.environ.get("PAYMENT_PROVIDER", "paystack")
+PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
+PAYSTACK_CALLBACK_URL = os.environ.get(
+    "PAYSTACK_CALLBACK_URL", "https://inrastudio.vercel.app/payment/verify"
+)
