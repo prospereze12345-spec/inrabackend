@@ -72,7 +72,14 @@ class PaystackProvider(PaymentProvider):
                 "https://inrastudio.vercel.app/payment/verify",
             ),
             "metadata": {
-                "user_id": user.id,
+                # str() matters here: `requests` serializes `json=` with
+                # plain stdlib json.dumps, which (unlike DRF's response
+                # encoder) doesn't know how to handle a UUID -- and many
+                # Supabase-backed User models use UUID primary keys, not
+                # ints. Without this, initialize_transaction blows up with
+                # "Object of type UUID is not JSON serializable" before
+                # the request ever reaches Paystack.
+                "user_id": str(user.id),
                 "plan_type": transaction.plan.plan_type,
             },
         }
