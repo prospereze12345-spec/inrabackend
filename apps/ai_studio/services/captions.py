@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 
-GROQ_MODEL   = getattr(settings, "GROQ_CAPTION_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = getattr(settings, "GROQ_CAPTION_MODEL", "openai/gpt-oss-120b")
 GROQ_TIMEOUT = getattr(settings, "GROQ_REQUEST_TIMEOUT", 120)
 
 DEFAULT_CONTACT_PLACEHOLDERS = {
