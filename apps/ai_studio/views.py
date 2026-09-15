@@ -232,32 +232,100 @@ def render_video_view(request):
         return JsonResponse({"error": f"Render dispatch failed: {exc}"}, status=500)
 
     return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
-
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
     provided = request.headers.get("X-Callback-Secret", "")
-    if not hmac.compare_digest(provided, settings.RENDER_CALLBACK_SECRET):
+    expected = getattr(settings, "RENDER_CALLBACK_SECRET", "")
+
+    if not hmac.compare_digest(provided, expected):
         return JsonResponse({"error": "unauthorized"}, status=401)
 
     try:
         data = json.loads(request.body)
         job_id = data["job_id"]
         render_status = data["status"]
-    except (KeyError, ValueError):
+    except (KeyError, TypeError, ValueError):
         return JsonResponse({"error": "bad request"}, status=400)
 
+    job_id = str(job_id).strip()
+    render_status = str(render_status).strip().lower()
+
+    if not job_id:
+        return JsonResponse({"error": "job_id is required"}, status=400)
+
+    if render_status not in {"success", "failed"}:
+        return JsonResponse(
+            {"error": "status must be 'success' or 'failed'"},
+            status=400,
+        )
+
+    video_url = str(data.get("video_url") or "").strip()
+    error_message = str(data.get("error") or "").strip()
+
+    # Campaign renders use AIJob.
     try:
-        job = PreviewRenderJob.objects.get(id=job_id)
-    except PreviewRenderJob.DoesNotExist:
-        logger.warning("video_render_complete: no PreviewRenderJob with id=%s", job_id)
+        job = AIJob.objects.get(id=job_id)
+    except (AIJob.DoesNotExist, ValueError, ValidationError):
+        job = None
+
+    if job is not None:
+        try:
+            apply_render_result(
+                job,
+                success=(render_status == "success"),
+                video_url=video_url,
+                error=error_message,
+            )
+        except Exception:
+            logger.exception(
+                "video_render_complete: failed applying AIJob result "
+                "job=%s status=%s",
+                job_id,
+                render_status,
+            )
+            return JsonResponse(
+                {"error": "Could not apply render result"},
+                status=500,
+            )
+
+        return JsonResponse({
+            "ok": True,
+            "job_type": "ai",
+            "job_id": job_id,
+        })
+
+    # Editor-preview renders use PreviewRenderJob.
+    try:
+        preview_job = PreviewRenderJob.objects.get(id=job_id)
+    except (PreviewRenderJob.DoesNotExist, ValueError, ValidationError):
+        logger.warning(
+            "video_render_complete: no AIJob or PreviewRenderJob with id=%s",
+            job_id,
+        )
         return JsonResponse({"error": "job not found"}, status=404)
 
-    apply_preview_render_result(
-        job,
-        success=(render_status == "success"),
-        video_url=data.get("video_url", ""),
-        error=data.get("error", ""),
-    )
+    try:
+        apply_preview_render_result(
+            preview_job,
+            success=(render_status == "success"),
+            video_url=video_url,
+            error=error_message,
+        )
+    except Exception:
+        logger.exception(
+            "video_render_complete: failed applying PreviewRenderJob "
+            "result job=%s status=%s",
+            job_id,
+            render_status,
+        )
+        return JsonResponse(
+            {"error": "Could not apply preview render result"},
+            status=500,
+        )
 
-    return JsonResponse({"ok": True})
+    return JsonResponse({
+        "ok": True,
+        "job_type": "preview",
+        "job_id": job_id,
+    })

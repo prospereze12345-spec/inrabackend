@@ -845,18 +845,46 @@ def build_promo_props(
         fp.get("productImage")
     )
 
-    if override_product_image:
-        product_image = _resolve_media_value(
-            override_product_image
-        )
+    # IMPORTANT:
+    #
+    # For an AIJob, image_nobg is the authoritative persistent
+    # processed product image. It must take priority over a
+    # potentially stale productImage override.
+    #
+    # Previously the override was checked first. That allowed a
+    # temporary Cloudinary URL such as:
+    #
+    #   /media/tmp/...
+    #
+    # to reach GitHub Actions after the temporary asset had
+    # already expired/deleted.
+    #
+    # Keep the override as a fallback for compatibility with
+    # render paths/jobs that do not have image_nobg.
 
-    elif getattr(
+    if getattr(
         job,
         "image_nobg",
         None,
     ):
         product_image = _storage_url(
             job.image_nobg
+        )
+
+        if not product_image:
+            logger.warning(
+                "Could not resolve persistent image_nobg "
+                "for job %s; falling back to productImage override.",
+                getattr(
+                    job,
+                    "id",
+                    "unknown",
+                ),
+            )
+
+    if not product_image and override_product_image:
+        product_image = _resolve_media_value(
+            override_product_image
         )
 
     # ------------------------------------------------------------------
@@ -1083,7 +1111,8 @@ def build_promo_props(
     logger.info(
         "Built PromoVideo props | "
         "job=%s | features=%d | benefits=%d | "
-        "voice=%s | voicePreset=%s | music=%s",
+        "voice=%s | voicePreset=%s | music=%s | "
+        "productImage=%s",
         getattr(
             job,
             "id",
@@ -1094,6 +1123,7 @@ def build_promo_props(
         voiceover_voice,
         voice_preset,
         bool(music_url),
+        bool(product_image),
     )
 
     return props
@@ -1290,7 +1320,7 @@ def dispatch_job_video(
         "format=%s | resolution=%sx%s | "
         "fps=%s | duration=%s frames | "
         "mediaOrigin=%s | voice=%s | "
-        "preset=%s | music=%s",
+        "preset=%s | music=%s | productImage=%s",
         job.id,
         format_name,
         format_config.width,
@@ -1307,6 +1337,11 @@ def dispatch_job_video(
         bool(
             props.get(
                 "musicUrl"
+            )
+        ),
+        bool(
+            props.get(
+                "productImage"
             )
         ),
     )
