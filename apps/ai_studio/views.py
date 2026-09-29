@@ -6,21 +6,30 @@ import uuid
 
 import requests
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.pricing.models import UserPlan, UsageLog
+from apps.pricing.services.entitlement import consume_generation
+
 from .models import AIJob, PreviewRenderJob
-from .promo import apply_render_result, apply_preview_render_result, dispatch_preview_render
+from .promo import (
+    apply_render_result,
+    apply_preview_render_result,
+    dispatch_preview_render,
+)
 from .services.qstash_client import enqueue_ai_job
 from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +40,101 @@ class CreateAIJobView(APIView):
 
     def post(self, request):
         image = request.FILES.get("image")
+
         if not image:
-            return Response({"error": "Image required"}, status=400)
+            return Response(
+                {"error": "Image required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        job = AIJob.objects.create(image=image, user=request.user)
-        enqueue_ai_job(str(job.id))
+        with transaction.atomic():
+            try:
+                user_plan = (
+                    UserPlan.objects
+                    .select_for_update()
+                    .select_related("plan")
+                    .get(user=request.user)
+                )
+            except UserPlan.DoesNotExist:
+                return Response(
+                    {
+                        "error": "No active plan found. Visit the dashboard first.",
+                        "can_generate": False,
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-        return Response({"job_id": str(job.id), "status": job.status}, status=202)
+            # Check and consume the user's generation entitlement.
+            #
+            # This is now done BEFORE creating the AI job so users cannot
+            # bypass Free/PAYG/Pro usage limits by calling this endpoint
+            # directly.
+            entitlement = consume_generation(user_plan)
+
+            if not entitlement["can_generate"]:
+                return Response(
+                    {
+                        "error": (
+                            entitlement["message"]
+                            or "No generations available."
+                        ),
+                        "can_generate": False,
+                        "remaining": entitlement["remaining"],
+                        "source": entitlement["source"],
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            # Existing AI job creation logic.
+            job = AIJob.objects.create(
+                image=image,
+                user=request.user,
+            )
+
+            # Save the consumed entitlement.
+            user_plan.save()
+
+            # Record the generation for usage/history tracking.
+            UsageLog.objects.create(
+                user=request.user,
+                campaign_id=str(job.id),
+                action="generated",
+                metadata={
+                    "plan": user_plan.plan.plan_type,
+                    "source": entitlement["source"],
+                },
+            )
+
+        # Keep the existing queueing behavior.
+        try:
+            enqueue_ai_job(str(job.id))
+        except Exception:
+            logger.exception(
+                "Failed to enqueue AI job after entitlement was consumed: "
+                "job=%s user=%s",
+                job.id,
+                request.user.id,
+            )
+
+            job.status = "failed"
+            job.save(update_fields=["status"])
+
+            return Response(
+                {
+                    "error": "Could not queue generation. Please try again."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "job_id": str(job.id),
+                "status": job.status,
+                "remaining": max(0, entitlement["remaining"] - 1),
+                "source": entitlement["source"],
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class JobStatusView(APIView):
@@ -48,19 +145,23 @@ class JobStatusView(APIView):
             return Response({"error": "Not found"}, status=404)
 
         status_map = {
-            "pending":    "pending",
+            "pending": "pending",
             "processing": "processing",
-            "completed":  "done",
-            "failed":     "error",
+            "completed": "done",
+            "failed": "error",
         }
-        return Response({
-            "job_id": str(job.id),
-            "status": status_map.get(job.status, "pending"),
-        })
+
+        return Response(
+            {
+                "job_id": str(job.id),
+                "status": status_map.get(job.status, "pending"),
+            }
+        )
 
 
 class JobResultView(APIView):
     permission_classes = [IsAuthenticated]
+
     PLATFORM_MAP = {
         "instagram": "Instagram",
         "tiktok": "TikTok",
@@ -72,6 +173,7 @@ class JobResultView(APIView):
     def _absolute_url(self, request, file_field):
         if not file_field:
             return None
+
         return request.build_absolute_uri(file_field.url)
 
     def get(self, request, job_id):
@@ -96,17 +198,23 @@ class JobResultView(APIView):
         raw_captions = (job.captions or {}).get("captions", {})
 
         captions = [
-            {"platform": label, "text": raw_captions[key]}
+            {
+                "platform": label,
+                "text": raw_captions[key],
+            }
             for key, label in self.PLATFORM_MAP.items()
             if raw_captions.get(key)
         ]
 
         flyer = {
             **(job.flyer_props or {}),
-            "productImage": self._absolute_url(request, job.image_nobg) or "",
+            "productImage": (
+                self._absolute_url(request, job.image_nobg) or ""
+            ),
         }
 
         video_url = None
+
         if job.video:
             try:
                 video_url = request.build_absolute_uri(job.video.url)
@@ -117,8 +225,14 @@ class JobResultView(APIView):
             {
                 "job_id": str(job.id),
                 "status": "done",
-                "png_url": self._absolute_url(request, job.image_nobg),
-                "flyer_url": self._absolute_url(request, job.flyer),
+                "png_url": self._absolute_url(
+                    request,
+                    job.image_nobg,
+                ),
+                "flyer_url": self._absolute_url(
+                    request,
+                    job.flyer,
+                ),
                 "video_url": video_url,
                 "captions": captions,
                 "flyer": flyer,
@@ -133,41 +247,67 @@ class RecentCampaignsView(APIView):
     def _absolute_url(self, request, file_field):
         if not file_field:
             return None
+
         return request.build_absolute_uri(file_field.url)
 
     def get(self, request):
         jobs = (
             AIJob.objects
-            .filter(user=request.user, status="completed")
+            .filter(
+                user=request.user,
+                status="completed",
+            )
             .order_by("-created_at")[:20]
         )
 
         results = [
             {
                 "job_id": str(job.id),
-                "headline": (job.flyer_props or {}).get("headline"),
-                "png_url": self._absolute_url(request, job.image_nobg),
-                "template_category": (job.flyer_props or {}).get("templateCategory"),
+                "headline": (
+                    job.flyer_props or {}
+                ).get("headline"),
+                "png_url": self._absolute_url(
+                    request,
+                    job.image_nobg,
+                ),
+                "template_category": (
+                    job.flyer_props or {}
+                ).get("templateCategory"),
                 "created_at": job.created_at.isoformat(),
             }
             for job in jobs
         ]
 
-        return Response(results, status=status.HTTP_200_OK)
+        return Response(
+            results,
+            status=status.HTTP_200_OK,
+        )
+
 
 @csrf_exempt
 def upload_asset(request):
     if request.method != "POST":
-        return JsonResponse({"error": "POST required"}, status=405)
+        return JsonResponse(
+            {"error": "POST required"},
+            status=405,
+        )
 
     file = request.FILES.get("file")
+
     if not file:
-        return JsonResponse({"error": "No file provided"}, status=400)
+        return JsonResponse(
+            {"error": "No file provided"},
+            status=400,
+        )
 
     ext = os.path.splitext(file.name)[1]
+
     filename = f"uploads/{uuid.uuid4().hex}{ext}"
 
-    saved_path = default_storage.save(filename, file)
+    saved_path = default_storage.save(
+        filename,
+        file,
+    )
 
     # Ask the storage backend for the correct URL — works whether it's
     # local disk, Cloudinary, S3, or anything else. Never hand-build this.
@@ -176,104 +316,219 @@ def upload_asset(request):
     # default_storage.url() already returns an absolute URL for Cloudinary;
     # for local storage it returns a relative path, so only build_absolute_uri
     # it if it isn't already absolute.
-    file_url = raw_url if raw_url.startswith("http") else request.build_absolute_uri(raw_url)
+    file_url = (
+        raw_url
+        if raw_url.startswith("http")
+        else request.build_absolute_uri(raw_url)
+    )
 
-    return JsonResponse({"url": file_url})
-
-    
+    return JsonResponse(
+        {"url": file_url}
+    )
 
 
 from django.views.decorators.http import require_GET
+
 
 @require_GET
 def render_video_status(request, job_id):
     try:
         job = PreviewRenderJob.objects.get(id=job_id)
-    except (PreviewRenderJob.DoesNotExist, ValueError, ValidationError):
-        return JsonResponse({"error": "job not found"}, status=404)
+    except (
+        PreviewRenderJob.DoesNotExist,
+        ValueError,
+        ValidationError,
+    ):
+        return JsonResponse(
+            {"error": "job not found"},
+            status=404,
+        )
 
-    return JsonResponse({
-        "job_id": str(job.id),
-        "status": job.status,          # "processing" | "success" | "failed"
-        "video_url": job.video_url or "",
-        "error": job.error or "",
-    })
+    return JsonResponse(
+        {
+            "job_id": str(job.id),
+            "status": job.status,
+            "video_url": job.video_url or "",
+            "error": job.error or "",
+        }
+    )
 
 
 @csrf_exempt
 @require_POST
 def render_video_view(request):
     """
-    One-off editor-preview export. Dispatches to GitHub Actions and returns
-    immediately with a job_id to poll — does NOT render synchronously.
-    """
-    try:
-        payload = json.loads(request.body.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JsonResponse({"error": "Invalid JSON body."}, status=400)
+    One-off editor-preview export.
 
-    format_name = payload.get("format", "ig")
-    if format_name not in SOCIAL_FORMATS:
+    Dispatches to GitHub Actions and returns immediately with a job_id
+    to poll — does NOT render synchronously.
+    """
+
+    try:
+        payload = json.loads(
+            request.body.decode("utf-8")
+        )
+    except (
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
         return JsonResponse(
-            {"error": f"Unknown format '{format_name}'. Available: {list(SOCIAL_FORMATS.keys())}"},
+            {"error": "Invalid JSON body."},
             status=400,
         )
 
-    props = normalize_promo_props(payload.get("props"))
+    format_name = payload.get(
+        "format",
+        "ig",
+    )
 
-    job = PreviewRenderJob.objects.create(status="processing", stage="rendering_video")
+    if format_name not in SOCIAL_FORMATS:
+        return JsonResponse(
+            {
+                "error": (
+                    f"Unknown format '{format_name}'. "
+                    f"Available: {list(SOCIAL_FORMATS.keys())}"
+                )
+            },
+            status=400,
+        )
+
+    props = normalize_promo_props(
+        payload.get("props")
+    )
+
+    job = PreviewRenderJob.objects.create(
+        status="processing",
+        stage="rendering_video",
+    )
 
     try:
-        dispatch_preview_render(job, props=props, format_name=format_name)
+        dispatch_preview_render(
+            job,
+            props=props,
+            format_name=format_name,
+        )
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
-        job.save(update_fields=["status", "error"])
-        return JsonResponse({"error": f"Render dispatch failed: {exc}"}, status=500)
 
-    return JsonResponse({"job_id": str(job.id), "status": "processing"}, status=202)
+        job.save(
+            update_fields=[
+                "status",
+                "error",
+            ]
+        )
+
+        return JsonResponse(
+            {
+                "error": (
+                    f"Render dispatch failed: {exc}"
+                )
+            },
+            status=500,
+        )
+
+    return JsonResponse(
+        {
+            "job_id": str(job.id),
+            "status": "processing",
+        },
+        status=202,
+    )
+
+
 @csrf_exempt
 @require_POST
 def video_render_complete(request):
-    provided = request.headers.get("X-Callback-Secret", "")
-    expected = getattr(settings, "RENDER_CALLBACK_SECRET", "")
+    provided = request.headers.get(
+        "X-Callback-Secret",
+        ""
+    )
 
-    if not hmac.compare_digest(provided, expected):
-        return JsonResponse({"error": "unauthorized"}, status=401)
+    expected = getattr(
+        settings,
+        "RENDER_CALLBACK_SECRET",
+        "",
+    )
+
+    if not hmac.compare_digest(
+        provided,
+        expected,
+    ):
+        return JsonResponse(
+            {"error": "unauthorized"},
+            status=401,
+        )
 
     try:
-        data = json.loads(request.body)
+        data = json.loads(
+            request.body
+        )
+
         job_id = data["job_id"]
         render_status = data["status"]
-    except (KeyError, TypeError, ValueError):
-        return JsonResponse({"error": "bad request"}, status=400)
 
-    job_id = str(job_id).strip()
-    render_status = str(render_status).strip().lower()
-
-    if not job_id:
-        return JsonResponse({"error": "job_id is required"}, status=400)
-
-    if render_status not in {"success", "failed"}:
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
         return JsonResponse(
-            {"error": "status must be 'success' or 'failed'"},
+            {"error": "bad request"},
             status=400,
         )
 
-    video_url = str(data.get("video_url") or "").strip()
-    error_message = str(data.get("error") or "").strip()
+    job_id = str(job_id).strip()
+    render_status = str(
+        render_status
+    ).strip().lower()
+
+    if not job_id:
+        return JsonResponse(
+            {"error": "job_id is required"},
+            status=400,
+        )
+
+    if render_status not in {
+        "success",
+        "failed",
+    }:
+        return JsonResponse(
+            {
+                "error": (
+                    "status must be 'success' or 'failed'"
+                )
+            },
+            status=400,
+        )
+
+    video_url = str(
+        data.get("video_url") or ""
+    ).strip()
+
+    error_message = str(
+        data.get("error") or ""
+    ).strip()
 
     # Campaign renders use AIJob.
     try:
-        job = AIJob.objects.get(id=job_id)
-    except (AIJob.DoesNotExist, ValueError, ValidationError):
+        job = AIJob.objects.get(
+            id=job_id
+        )
+    except (
+        AIJob.DoesNotExist,
+        ValueError,
+        ValidationError,
+    ):
         job = None
 
     if job is not None:
         try:
             apply_render_result(
                 job,
-                success=(render_status == "success"),
+                success=(
+                    render_status == "success"
+                ),
                 video_url=video_url,
                 error=error_message,
             )
@@ -284,31 +539,51 @@ def video_render_complete(request):
                 job_id,
                 render_status,
             )
+
             return JsonResponse(
-                {"error": "Could not apply render result"},
+                {
+                    "error": (
+                        "Could not apply render result"
+                    )
+                },
                 status=500,
             )
 
-        return JsonResponse({
-            "ok": True,
-            "job_type": "ai",
-            "job_id": job_id,
-        })
+        return JsonResponse(
+            {
+                "ok": True,
+                "job_type": "ai",
+                "job_id": job_id,
+            }
+        )
 
     # Editor-preview renders use PreviewRenderJob.
     try:
-        preview_job = PreviewRenderJob.objects.get(id=job_id)
-    except (PreviewRenderJob.DoesNotExist, ValueError, ValidationError):
+        preview_job = PreviewRenderJob.objects.get(
+            id=job_id
+        )
+    except (
+        PreviewRenderJob.DoesNotExist,
+        ValueError,
+        ValidationError,
+    ):
         logger.warning(
-            "video_render_complete: no AIJob or PreviewRenderJob with id=%s",
+            "video_render_complete: no AIJob or PreviewRenderJob "
+            "with id=%s",
             job_id,
         )
-        return JsonResponse({"error": "job not found"}, status=404)
+
+        return JsonResponse(
+            {"error": "job not found"},
+            status=404,
+        )
 
     try:
         apply_preview_render_result(
             preview_job,
-            success=(render_status == "success"),
+            success=(
+                render_status == "success"
+            ),
             video_url=video_url,
             error=error_message,
         )
@@ -319,13 +594,20 @@ def video_render_complete(request):
             job_id,
             render_status,
         )
+
         return JsonResponse(
-            {"error": "Could not apply preview render result"},
+            {
+                "error": (
+                    "Could not apply preview render result"
+                )
+            },
             status=500,
         )
 
-    return JsonResponse({
-        "ok": True,
-        "job_type": "preview",
-        "job_id": job_id,
-    })
+    return JsonResponse(
+        {
+            "ok": True,
+            "job_type": "preview",
+            "job_id": job_id,
+        }
+    )
