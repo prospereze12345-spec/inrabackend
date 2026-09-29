@@ -75,6 +75,7 @@ class UserPlan(models.Model):
 
     campaigns_used = models.PositiveIntegerField(default=0)
     campaigns_generated = models.PositiveIntegerField(default=0)
+    payg_credits = models.PositiveIntegerField(default=0)
     daily_generation_count = models.PositiveIntegerField(default=0)
     last_generation_date = models.DateField(null=True, blank=True)
 
