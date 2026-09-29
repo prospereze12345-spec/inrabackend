@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,7 @@ from ..models import Plan, Transaction, UserPlan
 from ..providers.base import PaymentProviderError
 from ..providers.flutterwave import FlutterwaveProvider
 from ..providers.paystack import PaystackProvider
+from .entitlement import is_pro_live
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ PROVIDERS = {
     "paystack": PaystackProvider,
     "flutterwave": FlutterwaveProvider,
 }
+
+PRO_PERIOD = timedelta(days=30)
 
 
 class PaymentService:
@@ -206,6 +210,13 @@ class PaymentService:
 
             if result["status"] == "successful" and amount_ok and currency_ok:
                 with db_transaction.atomic():
+                    # Lock the row and re-check: the webhook may have activated
+                    # this same payment while we were talking to the provider.
+                    transaction_obj = Transaction.objects.select_for_update().get(
+                        pk=transaction_obj.pk
+                    )
+                    if transaction_obj.status == "successful":
+                        return {"status": "success", "transaction": transaction_obj}
                     transaction_obj.status = "successful"
                     transaction_obj.completed_at = timezone.now()
                     transaction_obj.save()
@@ -238,25 +249,61 @@ class PaymentService:
         return {"status": "failed", "message": "Payment verification failed"}
 
     def _activate_user_plan(self, user, plan):
-        user_plan, created = UserPlan.objects.get_or_create(
-            user=user,
-            defaults={
-                "plan": plan,
-                "is_active": True,
-                "start_date": timezone.now(),
-            },
-        )
+        """
+        Must be called inside db_transaction.atomic() (both callers do), so
+        the select_for_update() row lock below is valid.
+
+        Pro:
+          - first purchase           -> end_date = now + 30d
+          - renewal while still live -> end_date += 30d (remaining time kept)
+          - expired / other plan     -> fresh period, end_date = now + 30d
+        PAYG:
+          - every successful payment -> +1 credit (credits persist until used)
+          - a live Pro plan is NOT downgraded by a PAYG purchase
+        Free: unchanged.
+        """
+        now = timezone.now()
+        is_pro = plan.plan_type == "pro"
+        is_payg = plan.plan_type == "payg"
+
+        defaults = {
+            "plan": plan,
+            "is_active": True,
+            "start_date": now,
+        }
+        if is_pro:
+            defaults["end_date"] = now + PRO_PERIOD
+        if is_payg:
+            defaults["payg_credits"] = 1
+
+        user_plan, created = UserPlan.objects.get_or_create(user=user, defaults=defaults)
 
         if not created:
-            if plan.plan_type == "pro":
-                if user_plan.plan.plan_type == "pro" and user_plan.is_active:
-                    user_plan.end_date = timezone.now() + timezone.timedelta(days=30)
+            # Serialise concurrent activations for the same user. No
+            # select_related: that would also lock the shared Plan row.
+            user_plan = UserPlan.objects.select_for_update().get(pk=user_plan.pk)
+
+            if is_pro:
+                still_active_pro = (
+                    user_plan.plan.plan_type == "pro"
+                    and user_plan.is_active
+                    and user_plan.end_date is not None
+                    and user_plan.end_date > now
+                )
+                if still_active_pro:
+                    user_plan.end_date = user_plan.end_date + PRO_PERIOD
                 else:
                     user_plan.plan = plan
                     user_plan.is_active = True
-                    user_plan.start_date = timezone.now()
+                    user_plan.start_date = now
+                    user_plan.end_date = now + PRO_PERIOD
                     user_plan.campaigns_used = 0
                     user_plan.daily_generation_count = 0
+            elif is_payg:
+                user_plan.payg_credits += 1
+                if not is_pro_live(user_plan, now):
+                    user_plan.plan = plan
+                    user_plan.is_active = True
             else:
                 user_plan.plan = plan
                 user_plan.is_active = True
@@ -287,13 +334,21 @@ class PaymentService:
 
         if event["status"] == "successful" and transaction_obj.status != "successful":
             with db_transaction.atomic():
+                # Lock + re-check so verify_payment() and this webhook can't
+                # both activate the same payment.
+                transaction_obj = Transaction.objects.select_for_update().get(
+                    pk=transaction_obj.pk
+                )
+                if transaction_obj.status == "successful":
+                    return {"status": "ignored"}
                 transaction_obj.status = "successful"
                 transaction_obj.completed_at = timezone.now()
                 transaction_obj.save()
                 self._activate_user_plan(transaction_obj.user, transaction_obj.plan)
             return {"status": "success", "transaction": transaction_obj}
 
-        if event["status"] == "failed":
+        # A late/duplicate "failed" event must never overwrite a paid transaction.
+        if event["status"] == "failed" and transaction_obj.status != "successful":
             transaction_obj.status = "failed"
             transaction_obj.error_message = "Payment failed"
             transaction_obj.save()

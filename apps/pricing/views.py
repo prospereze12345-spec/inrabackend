@@ -14,6 +14,7 @@ from .serializers import (
     UserPlanSerializer,
     InitiatePaymentSerializer,
 )
+from .services.entitlement import consume_generation, get_entitlement
 from .services.payment_service import PaymentService
 
 logger = logging.getLogger(__name__)
@@ -138,64 +139,65 @@ class PricingViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
     def check_usage(self, request):
+        """Read-only: reports whether the user may generate right now."""
         try:
-            user_plan = UserPlan.objects.get(user=request.user)
+            user_plan = UserPlan.objects.select_related("plan").get(user=request.user)
         except UserPlan.DoesNotExist:
             return Response(
                 {"can_generate": False, "message": "No active plan found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if not user_plan.is_active:
-            return Response({"can_generate": False, "message": "Your subscription is inactive"})
-
-        plan = user_plan.plan
-
-        if plan.plan_type == "pro":
-            today = timezone.now().date()
-            if user_plan.last_generation_date != today:
-                user_plan.daily_generation_count = 0
-                user_plan.last_generation_date = today
-                user_plan.save(update_fields=["daily_generation_count", "last_generation_date"])
-            remaining = max(0, (plan.daily_limit or 10) - user_plan.daily_generation_count)
-            return Response({"can_generate": remaining > 0, "remaining": remaining})
-
-        if plan.plan_type == "free":
-            remaining = max(0, plan.campaigns_per_month - user_plan.campaigns_used)
-            return Response({"can_generate": remaining > 0, "remaining": remaining})
-
-        if plan.plan_type == "payg":
-            remaining = max(0, 1 - user_plan.campaigns_used)
-            return Response({"can_generate": remaining > 0, "remaining": remaining})
-
-        return Response({"can_generate": False, "remaining": 0})
+        ent = get_entitlement(user_plan)
+        return Response({
+            "can_generate": ent["can_generate"],
+            "remaining": ent["remaining"],
+            "source": ent["source"],
+            "message": ent["message"],
+        })
 
     @action(detail=False, methods=["post"], permission_classes=[IsAuthenticated])
     def track_generation(self, request):
+        """Consumes one generation (a PAYG credit, or Pro's daily allowance).
+
+        Runs under a row lock and refuses when nothing is available, so
+        credits can never go negative and concurrent calls can't overspend.
+        """
         campaign_id = request.data.get("campaign_id")
         if not campaign_id:
             return Response({"error": "campaign_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            user_plan = UserPlan.objects.get(user=request.user)
-        except UserPlan.DoesNotExist:
-            return Response(
-                {"error": "No active plan found. Visit the dashboard first."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
         with transaction.atomic():
-            user_plan.campaigns_used += 1
-            user_plan.campaigns_generated += 1
-            user_plan.daily_generation_count += 1
-            user_plan.last_generation_date = timezone.now().date()
+            try:
+                # No select_related: it would also lock the shared Plan row.
+                user_plan = UserPlan.objects.select_for_update().get(user=request.user)
+            except UserPlan.DoesNotExist:
+                return Response(
+                    {"error": "No active plan found. Visit the dashboard first."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            ent = consume_generation(user_plan)
+            if not ent["can_generate"]:
+                return Response(
+                    {
+                        "error": ent["message"] or "No generations available",
+                        "can_generate": False,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             user_plan.save()
 
             UsageLog.objects.create(
                 user=request.user,
                 campaign_id=campaign_id,
                 action="generated",
-                metadata={"plan": user_plan.plan.plan_type},
+                metadata={"plan": user_plan.plan.plan_type, "source": ent["source"]},
             )
 
-        return Response({"success": True, "campaigns_used": user_plan.campaigns_used})
+        return Response({
+            "success": True,
+            "campaigns_used": user_plan.campaigns_used,
+            "payg_credits": user_plan.payg_credits,
+        })
