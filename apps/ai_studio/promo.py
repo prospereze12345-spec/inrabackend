@@ -1,3 +1,4 @@
+
 import logging
 from typing import Any, Dict
 
@@ -9,9 +10,14 @@ from django.db import transaction as db_transaction
 from django.utils import timezone
 
 from apps.pricing.models import UserPlan, UsageLog
+from apps.pricing.services.entitlement import (
+    consume_generation,
+    get_entitlement,
+)
 
 from .services.renderer import SOCIAL_FORMATS, normalize_promo_props
 from .services.renderer_dispatch import trigger_github_render
+
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,7 @@ def build_promo_props(job) -> Dict[str, Any]:
     for prop_name, job_field in field_map.items():
         if prop_name not in props:
             value = getattr(job, job_field, None)
+
             if value is not None:
                 props[prop_name] = value
 
@@ -62,13 +69,21 @@ def build_promo_props(job) -> Dict[str, Any]:
 def resolve_video_format(job) -> str:
     """
     Resolve the requested social-media video format from the job.
+
     Falls back to 'ig' if no valid format is stored on the job.
     """
-    possible_fields = ("format_name", "video_format", "format", "aspect_ratio")
+    possible_fields = (
+        "format_name",
+        "video_format",
+        "format",
+        "aspect_ratio",
+    )
+
     format_name = None
 
     for field_name in possible_fields:
         value = getattr(job, field_name, None)
+
         if value:
             format_name = str(value).lower().strip()
             break
@@ -79,15 +94,21 @@ def resolve_video_format(job) -> str:
     if format_name not in SOCIAL_FORMATS:
         logger.warning(
             "Unknown video format '%s' for job %s. Falling back to 'ig'.",
-            format_name, job.id,
+            format_name,
+            job.id,
         )
         format_name = "ig"
 
     return format_name
 
 
-def _build_render_config(job, props: dict, format_name: str) -> Dict[str, Any]:
+def _build_render_config(
+    job,
+    props: dict,
+    format_name: str,
+) -> Dict[str, Any]:
     format_config = SOCIAL_FORMATS[format_name]
+
     return {
         "compositionId": "PromoVideo",
         "inputProps": normalize_promo_props(props),
@@ -112,166 +133,377 @@ def dispatch_job_video(job) -> None:
     to Cloudinary, and calls the Django callback when finished.
     """
     if job.video and default_storage.exists(job.video.name):
-        logger.info("Job %s already has a rendered video. Skipping.", job.id)
+        logger.info(
+            "Job %s already has a rendered video. Skipping.",
+            job.id,
+        )
         return
 
     props = build_promo_props(job)
     format_name = resolve_video_format(job)
-    config = _build_render_config(job, props, format_name)
+    config = _build_render_config(
+        job,
+        props,
+        format_name,
+    )
 
     job.stage = "rendering_video"
     job.status = "processing"
-    job.save(update_fields=["stage", "status"])
+
+    job.save(
+        update_fields=[
+            "stage",
+            "status",
+        ]
+    )
 
     try:
-        trigger_github_render(job_id=str(job.id), config=config)
-        logger.info("GitHub Actions render dispatched successfully for job %s.", job.id)
+        trigger_github_render(
+            job_id=str(job.id),
+            config=config,
+        )
+
+        logger.info(
+            "GitHub Actions render dispatched successfully for job %s.",
+            job.id,
+        )
+
     except Exception as exc:
-        logger.exception("Failed to dispatch GitHub render for job %s.", job.id)
+        logger.exception(
+            "Failed to dispatch GitHub render for job %s.",
+            job.id,
+        )
+
         job.status = "failed"
         job.stage = "video_dispatch_failed"
         job.error = str(exc)
-        job.save(update_fields=["status", "stage", "error"])
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         raise
 
 
-def dispatch_preview_render(job, *, props: dict, format_name: str) -> None:
+def dispatch_preview_render(
+    job,
+    *,
+    props: dict,
+    format_name: str,
+) -> None:
     """
     Like dispatch_job_video, but for one-off editor-preview exports where
     props are supplied directly by the caller rather than built from a
     persisted AIJob's fields.
     """
-    config = _build_render_config(job, props, format_name)
+    config = _build_render_config(
+        job,
+        props,
+        format_name,
+    )
 
     job.stage = "rendering_video"
     job.status = "processing"
-    job.save(update_fields=["stage", "status"])
+
+    job.save(
+        update_fields=[
+            "stage",
+            "status",
+        ]
+    )
 
     try:
-        trigger_github_render(job_id=str(job.id), config=config)
+        trigger_github_render(
+            job_id=str(job.id),
+            config=config,
+        )
+
     except Exception as exc:
         job.status = "failed"
         job.stage = "video_dispatch_failed"
         job.error = str(exc)
-        job.save(update_fields=["status", "stage", "error"])
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         raise
+
 
 def _track_usage(job) -> None:
     """
-    Server-side usage tracking — the single source of truth for
-    'a campaign was generated', triggered directly by render completion
-    rather than a frontend fetch call that can silently fail.
+    Record ONE successful campaign.
 
-    Idempotent by construction: relies on a DB-level unique constraint on
-    UsageLog(campaign_id, action) — see apps/pricing/models.py — rather than
-    a plain existence check. A separate SELECT-then-CREATE (the previous
-    approach) is not race-safe: if the render callback fires twice for the
-    same job (duplicate webhook delivery, GitHub Actions retry, etc.) two
-    concurrent requests can both pass an .exists() check before either has
-    written its row, and both go on to increment usage — which is exactly
-    how 4 campaigns turned into 8 counted assets. get_or_create() below is
-    atomic against the unique constraint: Django catches the IntegrityError
-    from a losing concurrent insert and re-fetches instead, so only one
-    caller ever sees created=True.
+    IMPORTANT:
+    This function is now the authoritative usage-accounting point.
+
+    CreateAIJobView only checks entitlement.
+
+    This function is called only after the AI campaign has successfully
+    completed and the final render has been downloaded.
+
+    Therefore:
+        Gemini failure       -> no charge
+        QStash failure       -> no charge
+        video dispatch fail -> no charge
+        render failure      -> no charge
+        successful campaign -> exactly one charge
+
+    The UsageLog unique constraint on (campaign_id, action) protects against
+    duplicate render callbacks.
     """
-    user_id = getattr(job, "user_id", None)
+    user_id = getattr(
+        job,
+        "user_id",
+        None,
+    )
+
     if not user_id:
-        logger.info("Job %s has no associated user, skipping usage tracking.", job.id)
+        logger.warning(
+            "Job %s has no associated user; skipping usage tracking.",
+            job.id,
+        )
         return
 
     with db_transaction.atomic():
         try:
-            user_plan = UserPlan.objects.select_for_update().get(user_id=user_id)
+            user_plan = (
+                UserPlan.objects
+                .select_for_update()
+                .select_related("plan")
+                .get(user_id=user_id)
+            )
         except UserPlan.DoesNotExist:
-            logger.warning("No UserPlan for user %s, skipping usage tracking.", user_id)
+            logger.warning(
+                "No UserPlan for user %s; skipping usage tracking.",
+                user_id,
+            )
             return
 
-        # This is the actual idempotency guard. get_or_create() issues the
-        # INSERT and lets the DB's unique constraint decide who wins; the
-        # loser gets IntegrityError internally and Django transparently
-        # re-fetches, returning created=False. No window exists where two
-        # callers can both believe they're "first".
+        # A generation may have been started under one entitlement and
+        # another payment/state may have occurred while the AI job was
+        # processing. Re-check entitlement before charging.
+        entitlement = get_entitlement(user_plan)
+
+        if not entitlement["can_generate"]:
+            logger.error(
+                "Successful job %s cannot be charged because user %s "
+                "has no current entitlement.",
+                job.id,
+                user_id,
+            )
+            return
+
+        # The database unique constraint makes this idempotent.
         usage_log, created = UsageLog.objects.get_or_create(
             campaign_id=str(job.id),
             action="generated",
             defaults={
                 "user_id": user_id,
-                "metadata": {"plan": user_plan.plan.plan_type},
+                "metadata": {
+                    "plan": user_plan.plan.plan_type,
+                    "source": entitlement["source"],
+                    "completed_at": timezone.now().isoformat(),
+                },
             },
         )
 
         if not created:
             logger.info(
-                "Usage already tracked for job %s (user %s) — skipping duplicate increment.",
-                job.id, user_id,
+                "Usage already tracked for job %s (user %s). "
+                "Skipping duplicate increment.",
+                job.id,
+                user_id,
             )
             return
 
-        user_plan.campaigns_used += 1
+        consumption = consume_generation(
+            user_plan,
+            source=entitlement["source"],
+        )
+
+        if not consumption["can_generate"]:
+            # This should only be reachable if the entitlement changed
+            # unexpectedly between the check and consumption. Because the
+            # UserPlan row is locked, this should be extremely rare.
+            logger.error(
+                "Could not consume entitlement for successful job %s "
+                "user=%s.",
+                job.id,
+                user_id,
+            )
+
+            # Remove the UsageLog created above because no entitlement was
+            # actually consumed.
+            usage_log.delete()
+            return
+
+        # campaigns_generated is analytics, not an entitlement counter.
+        # It increases exactly once for each successfully completed campaign.
         user_plan.campaigns_generated += 1
-        user_plan.daily_generation_count += 1
-        user_plan.last_generation_date = timezone.now().date()
+
         user_plan.save()
 
-    logger.info("Usage tracked for job %s (user %s).", job.id, user_id)
-    
-def apply_render_result(job, *, success: bool, video_url: str = "", error: str = "") -> None:
+        logger.info(
+            "Successful campaign usage tracked: job=%s user=%s "
+            "source=%s remaining=%s",
+            job.id,
+            user_id,
+            consumption["source"],
+            consumption["remaining"],
+        )
+
+
+def apply_render_result(
+    job,
+    *,
+    success: bool,
+    video_url: str = "",
+    error: str = "",
+) -> None:
     """
-    Applies the result received from the GitHub Actions callback.
-    On success: downloads the video, saves it to the job, marks it
-    completed, and increments the user's usage counters server-side.
-    On failure: marks the job failed with the given error.
+    Apply the result received from the GitHub Actions callback.
+
+    On success:
+        - download the video
+        - save it to the AIJob
+        - mark the job completed
+        - record exactly one successful generation
+
+    On failure:
+        - mark the job failed
+        - do NOT consume entitlement
     """
     if not success:
         job.status = "failed"
         job.stage = "video_render_failed"
-        job.error = error or "GitHub Actions render failed"
-        job.save(update_fields=["status", "stage", "error"])
+        job.error = (
+            error
+            or "GitHub Actions render failed"
+        )
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         return
 
     if not video_url:
         job.status = "failed"
         job.stage = "video_render_failed"
-        job.error = "Render reported success but no video_url was provided"
-        job.save(update_fields=["status", "stage", "error"])
+        job.error = (
+            "Render reported success but no video_url was provided"
+        )
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         return
 
-    resp = requests.get(video_url, timeout=60)
+    resp = requests.get(
+        video_url,
+        timeout=60,
+    )
     resp.raise_for_status()
 
-    job.video.save(f"{job.id}.mp4", ContentFile(resp.content), save=False)
+    job.video.save(
+        f"{job.id}.mp4",
+        ContentFile(resp.content),
+        save=False,
+    )
+
     job.status = "completed"
     job.stage = "completed"
     job.error = None
-    job.save(update_fields=["video", "status", "stage", "error"])
 
+    job.save(
+        update_fields=[
+            "video",
+            "status",
+            "stage",
+            "error",
+        ]
+    )
+
+    # ONLY NOW does the campaign become billable/consumed.
     _track_usage(job)
 
 
-def apply_preview_render_result(job, *, success: bool, video_url: str = "", error: str = "") -> None:
+def apply_preview_render_result(
+    job,
+    *,
+    success: bool,
+    video_url: str = "",
+    error: str = "",
+) -> None:
     """
     Applies the GitHub Actions callback result to a PreviewRenderJob
-    (one-off editor exports). Unlike apply_render_result (used for AIJob),
-    this does NOT download/store the video locally — the Cloudinary URL
-    from the GitHub Action is the source of truth, and there's no
-    usage tracking or FileField involved for previews.
+    (one-off editor exports).
+
+    Preview exports do NOT consume campaign entitlement.
     """
     if not success:
         job.status = "failed"
         job.stage = "video_render_failed"
-        job.error = error or "GitHub Actions render failed"
-        job.save(update_fields=["status", "stage", "error"])
+        job.error = (
+            error
+            or "GitHub Actions render failed"
+        )
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         return
 
     if not video_url:
         job.status = "failed"
         job.stage = "video_render_failed"
-        job.error = "Render reported success but no video_url was provided"
-        job.save(update_fields=["status", "stage", "error"])
+        job.error = (
+            "Render reported success but no video_url was provided"
+        )
+
+        job.save(
+            update_fields=[
+                "status",
+                "stage",
+                "error",
+            ]
+        )
+
         return
 
     job.status = "success"
     job.stage = "completed"
     job.video_url = video_url
     job.error = ""
-    job.save(update_fields=["status", "stage", "video_url", "error"])
+
+    job.save(
+        update_fields=[
+            "status",
+            "stage",
+            "video_url",
+            "error",
+        ]
+    )

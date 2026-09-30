@@ -1,3 +1,4 @@
+
 import hmac
 import json
 import logging
@@ -8,23 +9,22 @@ import requests
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
-from django.db import transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 from rest_framework import status
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.pricing.models import UserPlan, UsageLog
-from apps.pricing.services.entitlement import consume_generation
+from apps.pricing.models import UserPlan
+from apps.pricing.services.entitlement import get_entitlement
 
 from .models import AIJob, PreviewRenderJob
 from .promo import (
-    apply_render_result,
     apply_preview_render_result,
+    apply_render_result,
     dispatch_preview_render,
 )
 from .services.qstash_client import enqueue_ai_job
@@ -47,81 +47,93 @@ class CreateAIJobView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        with transaction.atomic():
-            try:
-                user_plan = (
-                    UserPlan.objects
-                    .select_for_update()
-                    .select_related("plan")
-                    .get(user=request.user)
-                )
-            except UserPlan.DoesNotExist:
-                return Response(
-                    {
-                        "error": "No active plan found. Visit the dashboard first.",
-                        "can_generate": False,
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+        # IMPORTANT:
+        # This endpoint CHECKS entitlement but does not permanently consume it.
+        #
+        # A generation is only charged after the AI campaign actually
+        # completes successfully. This prevents Gemini/QStash/provider
+        # failures from consuming the user's Free/PAYG/Pro entitlement.
+        try:
+            user_plan = (
+                UserPlan.objects
+                .select_related("plan")
+                .get(user=request.user)
+            )
+        except UserPlan.DoesNotExist:
+            return Response(
+                {
+                    "error": "No active plan found. Visit the dashboard first.",
+                    "can_generate": False,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-            # Check and consume the user's generation entitlement.
-            #
-            # This is now done BEFORE creating the AI job so users cannot
-            # bypass Free/PAYG/Pro usage limits by calling this endpoint
-            # directly.
-            entitlement = consume_generation(user_plan)
+        entitlement = get_entitlement(user_plan)
 
-            if not entitlement["can_generate"]:
-                return Response(
-                    {
-                        "error": (
-                            entitlement["message"]
-                            or "No generations available."
-                        ),
-                        "can_generate": False,
-                        "remaining": entitlement["remaining"],
-                        "source": entitlement["source"],
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        if not entitlement["can_generate"]:
+            return Response(
+                {
+                    "error": (
+                        entitlement["message"]
+                        or "No generations available."
+                    ),
+                    "can_generate": False,
+                    "remaining": entitlement["remaining"],
+                    "source": entitlement["source"],
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-            # Existing AI job creation logic.
+        # Create the AI job only after the entitlement check passes.
+        #
+        # We deliberately do NOT modify UserPlan here.
+        # The successful-completion path in promo.py is now the single
+        # authoritative place that records actual usage.
+        try:
             job = AIJob.objects.create(
                 image=image,
                 user=request.user,
             )
-
-            # Save the consumed entitlement.
-            user_plan.save()
-
-            # Record the generation for usage/history tracking.
-            UsageLog.objects.create(
-                user=request.user,
-                campaign_id=str(job.id),
-                action="generated",
-                metadata={
-                    "plan": user_plan.plan.plan_type,
-                    "source": entitlement["source"],
+        except Exception:
+            logger.exception(
+                "Failed to create AI job for user=%s",
+                request.user.id,
+            )
+            return Response(
+                {
+                    "error": "Could not create generation job. Please try again."
                 },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # Keep the existing queueing behavior.
+        # Queue the job.
+        #
+        # If queueing fails, the job is marked failed and the entitlement
+        # remains untouched because we have not consumed anything yet.
         try:
             enqueue_ai_job(str(job.id))
         except Exception:
             logger.exception(
-                "Failed to enqueue AI job after entitlement was consumed: "
-                "job=%s user=%s",
+                "Failed to enqueue AI job: job=%s user=%s",
                 job.id,
                 request.user.id,
             )
 
             job.status = "failed"
-            job.save(update_fields=["status"])
+            job.stage = "queue_failed"
+            job.save(
+                update_fields=[
+                    "status",
+                    "stage",
+                ]
+            )
 
             return Response(
                 {
-                    "error": "Could not queue generation. Please try again."
+                    "error": "Could not queue generation. Please try again.",
+                    "can_generate": True,
+                    "remaining": entitlement["remaining"],
+                    "source": entitlement["source"],
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
@@ -130,7 +142,7 @@ class CreateAIJobView(APIView):
             {
                 "job_id": str(job.id),
                 "status": job.status,
-                "remaining": max(0, entitlement["remaining"] - 1),
+                "remaining": entitlement["remaining"],
                 "source": entitlement["source"],
             },
             status=status.HTTP_202_ACCEPTED,
@@ -138,11 +150,19 @@ class CreateAIJobView(APIView):
 
 
 class JobStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request, job_id):
         try:
-            job = AIJob.objects.get(id=job_id)
+            job = AIJob.objects.get(
+                id=job_id,
+                user=request.user,
+            )
         except AIJob.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            return Response(
+                {"error": "Not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         status_map = {
             "pending": "pending",
@@ -178,7 +198,10 @@ class JobResultView(APIView):
 
     def get(self, request, job_id):
         try:
-            job = AIJob.objects.get(id=job_id)
+            job = AIJob.objects.get(
+                id=job_id,
+                user=request.user,
+            )
         except AIJob.DoesNotExist:
             return Response(
                 {"error": "Job not found"},
@@ -301,7 +324,6 @@ def upload_asset(request):
         )
 
     ext = os.path.splitext(file.name)[1]
-
     filename = f"uploads/{uuid.uuid4().hex}{ext}"
 
     saved_path = default_storage.save(
@@ -309,13 +331,8 @@ def upload_asset(request):
         file,
     )
 
-    # Ask the storage backend for the correct URL — works whether it's
-    # local disk, Cloudinary, S3, or anything else. Never hand-build this.
     raw_url = default_storage.url(saved_path)
 
-    # default_storage.url() already returns an absolute URL for Cloudinary;
-    # for local storage it returns a relative path, so only build_absolute_uri
-    # it if it isn't already absolute.
     file_url = (
         raw_url
         if raw_url.startswith("http")
@@ -325,9 +342,6 @@ def upload_asset(request):
     return JsonResponse(
         {"url": file_url}
     )
-
-
-from django.views.decorators.http import require_GET
 
 
 @require_GET
@@ -362,6 +376,8 @@ def render_video_view(request):
 
     Dispatches to GitHub Actions and returns immediately with a job_id
     to poll — does NOT render synchronously.
+
+    This is an editor preview and does NOT consume campaign entitlement.
     """
 
     try:
@@ -442,7 +458,7 @@ def render_video_view(request):
 def video_render_complete(request):
     provided = request.headers.get(
         "X-Callback-Secret",
-        ""
+        "",
     )
 
     expected = getattr(
@@ -590,7 +606,7 @@ def video_render_complete(request):
     except Exception:
         logger.exception(
             "video_render_complete: failed applying PreviewRenderJob "
-            "result job=%s status=%s",
+            "job=%s status=%s",
             job_id,
             render_status,
         )
